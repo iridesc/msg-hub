@@ -1,0 +1,48 @@
+{
+  "type": "wecom_bot",
+  "name": "企业微信群机器人",
+  "version": "1.0.0",
+  "description": "通过企业微信群机器人 webhook 向指定群发送消息。使用群机器人 key 即可，无需企业管理员权限；支持纯文本与 markdown，纯文本支持 @成员 / @所有人。",
+  "entry": "send_msg.py",
+  "capabilities": {
+    "formats": ["plain", "markdown"],
+    "mention": true,
+    "mention_all": true,
+    "attachments": false,
+    "max_chars": 4000
+  },
+  "settings_schema": {
+    "type": "object",
+    "title": "企业微信群机器人配置",
+    "description": "两种填法二选一：webhook_key（只填 key）或 webhook_url（完整地址，便于私有化/代理/测试）。",
+    "anyOf": [{ "required": ["webhook_key"] }, { "required": ["webhook_url"] }],
+    "properties": {
+      "webhook_key": {
+        "type": "string",
+        "title": "Webhook Key",
+        "description": "群机器人地址里的 key 参数，形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<这一串>",
+        "secret": true,
+        "minLength": 1
+      },
+      "webhook_url": {
+        "type": "string",
+        "title": "Webhook 完整地址",
+        "description": "留空则由 base_url + webhook_key 拼接；填了则优先使用本字段",
+        "secret": true
+      },
+      "base_url": {
+        "type": "string",
+        "title": "API 网关地址",
+        "description": "默认企业微信公网地址，私有化/代理场景可改",
+        "default": "https://qyapi.weixin.qq.com"
+      },
+      "timeout": {
+        "type": "integer",
+        "title": "请求超时（秒）",
+        "default": 10,
+        "minimum": 1,
+        "maximum": 60
+      }
+    }
+  }
+}
