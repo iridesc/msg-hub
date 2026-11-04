@@ -42,6 +42,11 @@
         "default": 10,
         "minimum": 1,
         "maximum": 60
+      },
+      "http_proxy": {
+        "type": "string",
+        "title": "HTTP 代理（可选）",
+        "description": "形如 http://proxy:8080。留空时忽略系统代理环境变量；只有确实需要经代理访问企业微信时才填"
       }
     }
   }

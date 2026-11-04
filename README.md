@@ -29,9 +29,26 @@ curl / 定时任务     → │ /api   REST                             │
 - **凭据与索引分离**：`channels.json` 只放 id / 名称 / 类型；凭据在 `config/<id>.json`（`0600`），接口返回一律打码
 - **防误发**：名称模糊匹配到多个时**报错并给候选**，绝不猜；`dry_run` 先校验；`@all` 需显式开启；单渠道限流
 - **审计日志**：每条发送（含 dry_run、失败）写 `logs/YYYY-MM-DD.jsonl`，`message_logs` 可查
-- **零外部依赖**：Python + httpx + smtplib，没有数据库、没有 MQ
+- **两种部署形态**：HTTP 服务（compose，供外部系统调用）/ **stdio 子进程（零依赖，直接塞进 pi-box 等宿主）**
+- **零外部依赖**：核心只用标准库（无 pip 包），没有数据库、没有 MQ
 
-## 快速开始
+## 两种部署形态
+
+| 形态 | 入口 | 依赖 | 适用 |
+|---|---|---|---|
+| **stdio（推荐集成 pi-box）** | `python3 src/msg_hub/stdio.py` | **仅 python3** | 由宿主（pi-box / Claude Desktop）作为子进程拉起 |
+| HTTP 服务 | `python3 -m msg_hub`（compose） | `pip install .[http]` | 多系统共用、用 curl / 定时任务调用 |
+
+stdio 模式手写实现了 MCP 的 `initialize` / `tools/list` / `tools/call`，不依赖 mcp SDK，所以只要有 python3 就能跑（pi-box 镜像里就是 `python3 3.11`、无 pip）。数据目录默认 `~/.msg-hub`，可用 `MSG_HUB_DATA_DIR` 指定。
+
+手工验证：
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
+  | python3 src/msg_hub/stdio.py
+```
+
+## 快速开始（HTTP 服务）
 
 ```bash
 cp .env.example .env
@@ -92,43 +109,83 @@ curl -s -X POST localhost:8788/api/channels \
 
 > Gmail 在国内直连大概率不通，可在 settings 里加 `"socks5_proxy": "socks5://PROXY_HOST:PORT"`。
 
-## 接入 pi-box
+## 接入 pi-box（stdio，推荐）
 
-msg-hub 是**独立容器**，pi-box 通过 MCP 的 HTTP 传输接入（不是 stdio 子进程）。
+pi-box 的 MCP 是"子进程 + stdio"模型，所以 msg-hub 用 stdio 形态最省事：**不需要额外容器、不需要端口、不需要 token**。
 
-1. 让两个 compose 在同一个网络里（在 `compose.yaml` 里取消 `networks` 注释，或手动指定）：
+### 1. 把源码只读挂载进 pi-box 容器
+
+在 pi-box 的 `docker-compose.yml` 里加一行（`../msg-hub` 指向本仓库）：
 
 ```yaml
-services:
-  msg-hub:
-    networks: [pi-box-net]
-
-networks:
-  pi-box-net:
-    external: true
-    name: pi-box_default      # 实际名字用 `podman network ls` 确认
+    volumes:
+      - ./workspace:/workspace
+      - ./agent-home:/home/agent
+      - ../msg-hub:/opt/msg-hub:ro     # ← msg-hub 源码（只读）
 ```
 
-2. 在 pi-box 的「系统设置 → MCP」里新增（或直接编辑 `agent-home/.pi/agent/mcp.json`）：
+### 2. 注册 MCP
 
-```json
-{
-  "mcpServers": {
-    "msg-hub": {
-      "url": "http://msg-hub:8788/mcp",
-      "headers": { "Authorization": "Bearer ${MSG_HUB_TOKEN}" },
+界面「系统设置 → MCP → 新增」，或直接调 API：
+
+```bash
+curl -s -X POST http://127.0.0.1:8790/api/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "msg-hub",
+    "config": {
+      "command": "python3",
+      "args": ["/opt/msg-hub/src/msg_hub/stdio.py"],
+      "env": { "MSG_HUB_DATA_DIR": "/home/agent/.pi-boxd/msg-hub" },
       "description": "消息渠道中心：渠道增删改查 + 统一发送（企微群 / 邮箱）",
       "exposure": "direct",
       "timeout": 60
     }
+  }'
+
+# 验证（走真实 stdio 握手）
+curl -s -X POST http://127.0.0.1:8790/api/mcp/test -H 'Content-Type: application/json' -d '{"name":"msg-hub"}'
+```
+
+> 数据目录务必用绝对路径（`/home/agent/.pi-boxd/msg-hub`）：子进程的 cwd 是 `/workspace`，相对路径会写错位置。放在 `agent-home` 下可随现有备份策略持久化。
+
+### 3. 给角色授权
+
+在该助理/Agent 的 `.md` frontmatter 加 `mcps: [msg-hub]`（或界面里勾选）。
+
+### 4. 用起来
+
+跟助理说："把运维告警群加进来，webhook key 是 xxx"，然后"往运维告警群发条消息：磁盘告警"。
+
+> ⚠️ **容器代理坑**：podman 会把宿主机的 `http_proxy`（如 `127.0.0.1:11001`）注入容器，而容器内并不存在该代理。wecom 插件默认**忽略环境代理**，只有显式配置 `http_proxy` 时才走代理——所以无需额外处理。若确实要经代理访问企业微信，在渠道 `settings` 里填 `http_proxy`。
+
+### HTTP 服务形态（可选）
+
+如果还想让别的系统（bash、定时任务、其他平台）用 REST 调用，再额外跑 compose 版，并通过 MCP HTTP 传输接入：
+
+```yaml
+# msg-hub/compose.yaml
+services:
+  msg-hub:
+    networks: [pi-box-net]
+networks:
+  pi-box-net:
+    external: true
+    name: pi-box_default
+```
+
+```json
+{
+  "mcpServers": {
+    "msg-hub-http": {
+      "url": "http://msg-hub:8788/mcp",
+      "headers": { "Authorization": "Bearer ${MSG_HUB_TOKEN}" },
+      "description": "消息渠道中心（HTTP）",
+      "exposure": "direct"
+    }
   }
 }
 ```
-
-> `headers` 里的 `${MSG_HUB_TOKEN}` 由 pi-boxd 进程环境变量展开，记得在 pi-box 的 compose 里也注入同名变量。
-> 若两个容器不在同一网络，可把 msg-hub 端口映射到本机后填 `http://host.containers.internal:8788/mcp`。
-
-3. 给助理/Agent 授权：在该角色的 `.md` frontmatter 加 `mcps: [msg-hub]`（界面里勾选同理）。
 
 ## MCP 工具
 
@@ -268,8 +325,8 @@ python3 types/wecom_bot/send_msg.py --config data/config/1.json [--dry-run]
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `MSG_HUB_TOKEN` | 空 | Bearer Token；**生产必填** |
-| `MSG_HUB_DATA_DIR` | `/data`（容器）/`./data` | 数据目录 |
+| `MSG_HUB_TOKEN` | 空 | HTTP 模式的 Bearer Token；**HTTP 生产必填**（stdio 模式不需要） |
+| `MSG_HUB_DATA_DIR` | `~/.msg-hub` | 数据目录（compose 里设为 `/data`） |
 | `MSG_HUB_TYPES_DIR` | `/app/types` | 插件目录 |
 | `MSG_HUB_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*,msg-hub:*,[::1]:*` | MCP 传输层 Host 白名单（DNS rebinding 防护），跨容器部署要加上容器名 |
 | `MSG_HUB_PLUGIN_TIMEOUT` | `20` | 插件超时（秒） |
@@ -289,9 +346,10 @@ python3 types/wecom_bot/send_msg.py --config data/config/1.json [--dry-run]
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest -q
-python -m msg_hub      # 本地起服务（默认 0.0.0.0:8788）
+pip install -e ".[dev,http]"
+pytest -q                       # 47 个测试，无需联网
+python -m msg_hub               # HTTP 服务（默认 0.0.0.0:8788）
+python src/msg_hub/stdio.py     # stdio MCP（零依赖，直接可跑）
 ```
 
 ## License

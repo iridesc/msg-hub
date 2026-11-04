@@ -38,7 +38,10 @@ class Settings:
     version: str = __version__
     host: str = field(default_factory=lambda: _env("MSG_HUB_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: _env_int("MSG_HUB_PORT", 8788))
-    data_dir: Path = field(default_factory=lambda: Path(_env("MSG_HUB_DATA_DIR", "./data")).resolve())
+    # 默认 ~/.msg-hub：stdio 子进程的 cwd 不可控（如 pi-box 的 /workspace），不能依赖相对路径
+    data_dir: Path = field(
+        default_factory=lambda: Path(_env("MSG_HUB_DATA_DIR", str(Path.home() / ".msg-hub"))).expanduser().resolve()
+    )
     types_dir: Path = field(
         default_factory=lambda: Path(
             _env("MSG_HUB_TYPES_DIR", str(Path(__file__).resolve().parents[2] / "types"))

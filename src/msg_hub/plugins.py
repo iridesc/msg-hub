@@ -36,8 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import jsonschema
-
+from . import schema as _schema
 from .models import HubError, Message
 from .settings import Settings
 
@@ -92,13 +91,16 @@ class PluginResult:
         return data
 
 
-def _error_field(err: jsonschema.ValidationError) -> str:
-    """把 jsonschema 错误映射成可读字段名：必填缺失取属性名，其余取路径。"""
-    if err.validator == "required":
-        missing = err.message.split("'")[1] if "'" in err.message else ""
-        prefix = ".".join(str(p) for p in err.absolute_path)
-        return f"{prefix}.{missing}" if prefix else missing
-    return ".".join(str(p) for p in err.absolute_path) or "(root)"
+def details_from(errors: list[dict[str, str]]) -> list[dict[str, str]]:
+    """排序去重，报错稳定（任何字段缺失的 required 排最前）。"""
+    seen: set[str] = set()
+    unique = []
+    for item in errors:
+        key = f"{item['field']}|{item['message']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
 
 
 def _secret_paths(schema: dict[str, Any]) -> dict[str, str]:
@@ -210,17 +212,15 @@ class Registry:
         if not isinstance(settings, dict):
             raise HubError("invalid_settings", "settings 必须是对象")
         merged = _apply_defaults(manifest.settings_schema, settings)
-        validator = jsonschema.Draft202012Validator(manifest.settings_schema)
-        errors = sorted(validator.iter_errors(merged), key=lambda e: list(e.absolute_path))
+        try:
+            errors = _schema.validate(manifest.settings_schema, merged)
+        except _schema.SchemaError as exc:
+            raise HubError("type_unknown", f"{manifest.type}: manifest schema 不合法：{exc}") from exc
         if errors:
-            details = [
-                {"field": _error_field(err), "message": err.message}
-                for err in errors
-            ]
             raise HubError(
                 "invalid_settings",
-                "; ".join(f"{d['field']}: {d['message']}" for d in details),
-                fields=details,
+                "; ".join(f"{d['field']}: {d['message']}" for d in errors),
+                fields=details_from(errors),
             )
         return merged
 

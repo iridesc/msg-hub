@@ -181,3 +181,20 @@ def test_retryable_semantics_propagates_from_plugin(hub, mock_wecom):
     with pytest.raises(HubError) as exc:
         hub.send(channel["id"], "hi")
     assert exc.value.retryable is True  # 企微限流 45009 可重试
+
+
+def test_plugin_ignores_ambient_proxy_env(hub, mock_wecom, monkeypatch):
+    """容器常被注入不可达的 http_proxy；插件必须默认忽略，只在显式配置时走代理。"""
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")  # 故意指向死端口
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+
+    channel = hub.create_channel(
+        name="代理干扰群",
+        type_name="wecom_bot",
+        settings={"webhook_url": f"{mock_wecom.base_url}/send?key=k"},
+    )
+    result = hub.send(channel["id"], "应当绕过环境代理")
+    assert result["ok"] is True
+    assert mock_wecom.last["json"]["text"]["content"] == "应当绕过环境代理"

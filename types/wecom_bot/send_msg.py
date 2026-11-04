@@ -16,9 +16,9 @@ import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from typing import Any
-
-import httpx
 
 DEFAULT_BASE_URL = "https://qyapi.weixin.qq.com"
 TEXT_MAX_BYTES = 2048
@@ -143,25 +143,45 @@ def main() -> int:
         )
         return 0
 
+    # 标准库 urllib 实现（插件要求零第三方依赖，可在 pi-box 容器里直接跑）。
+    # 默认忽略环境里的 http_proxy/https_proxy：容器常被注入宿主机代理（如 127.0.0.1:xxxx），
+    # 在容器内不可达，会表现为莫名其妙的 Connection refused。需要代理时必须显式配置 http_proxy。
+    proxy = str(settings.get("http_proxy") or "").strip()
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": proxy, "https": proxy} if proxy else {})
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, json=payload)
-    except httpx.TimeoutException:
+        with opener.open(request, timeout=timeout) as response:
+            status = response.status
+            text = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:  # HTTP 4xx/5xx
+        status = exc.code
+        text = exc.read().decode("utf-8", "replace") if exc.fp else ""
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+            return fail("send_failed", f"请求企业微信超时（{timeout:g}s）", retryable=True)
+        return fail("send_failed", f"请求企业微信失败：{reason}", retryable=True)
+    except TimeoutError:
         return fail("send_failed", f"请求企业微信超时（{timeout:g}s）", retryable=True)
-    except httpx.HTTPError as exc:
-        return fail("send_failed", f"请求企业微信失败：{exc}", retryable=True)
 
     elapsed_ms = int((time.monotonic() - started) * 1000)
-    if response.status_code >= 500:
-        return fail("send_failed", f"企业微信返回 HTTP {response.status_code}", retryable=True)
+    if status >= 500:
+        return fail("send_failed", f"企业微信返回 HTTP {status}", retryable=True)
     try:
-        body = response.json()
+        body = json.loads(text)
     except ValueError:
-        return fail("send_failed", f"企业微信返回非 JSON（HTTP {response.status_code}）：{response.text[:200]}")
+        return fail("send_failed", f"企业微信返回非 JSON（HTTP {status}）：{text[:200]}")
 
     errcode = int(body.get("errcode", -1))
     errmsg = str(body.get("errmsg") or "")
-    if response.status_code == 200 and errcode == 0:
+    if status == 200 and errcode == 0:
         emit(
             {
                 "ok": True,
