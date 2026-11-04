@@ -1,0 +1,32 @@
+[project]
+name = "msg-hub"
+version = "0.1.0"
+description = "多渠道路由的消息发送 MCP 服务：渠道增删改查 + 统一发送"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+# 核心零第三方依赖：stdio 模式（python -m msg_hub.stdio）可在仅有 python3 的
+# 环境直接运行（例如 pi-box 容器）；HTTP 服务模式装 [http] extra。
+dependencies = []
+
+[project.optional-dependencies]
+http = [
+  "mcp>=2.3,<3",
+  "starlette>=0.40",
+  "uvicorn>=0.30",
+]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+msg-hub = "msg_hub.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

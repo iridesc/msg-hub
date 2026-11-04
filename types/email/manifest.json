@@ -1,0 +1,90 @@
+{
+  "type": "email",
+  "name": "邮箱（SMTP）",
+  "version": "1.0.0",
+  "description": "通过 SMTP 用指定账号发邮件到固定收件人。支持纯文本与 HTML，支持 SSL/STARTTLS，支持 SOCKS5 代理（Gmail 等直连不通时用）。QQ/163 等需填授权码而非登录密码。",
+  "entry": "send_msg.py",
+  "capabilities": {
+    "formats": ["plain", "markdown"],
+    "mention": false,
+    "mention_all": false,
+    "attachments": false,
+    "max_chars": 20000
+  },
+  "settings_schema": {
+    "type": "object",
+    "title": "邮箱渠道配置",
+    "required": ["smtp_host", "username", "password", "to"],
+    "properties": {
+      "smtp_host": {
+        "type": "string",
+        "title": "SMTP 服务器",
+        "description": "如 smtp.qq.com / smtp.gmail.com",
+        "minLength": 1,
+        "examples": ["smtp.qq.com", "smtp.163.com", "smtp.gmail.com"]
+      },
+      "smtp_port": {
+        "type": "integer",
+        "title": "SMTP 端口",
+        "default": 465,
+        "description": "465（SSL）/ 587（STARTTLS）/ 25（明文）",
+        "minimum": 1,
+        "maximum": 65535
+      },
+      "security": {
+        "type": "string",
+        "title": "加密方式",
+        "enum": ["ssl", "starttls", "none"],
+        "default": "ssl"
+      },
+      "username": {
+        "type": "string",
+        "title": "登录账号",
+        "description": "通常是完整邮箱地址",
+        "minLength": 1
+      },
+      "password": {
+        "type": "string",
+        "title": "登录密码 / 授权码",
+        "description": "QQ、163 必须用「授权码」；Gmail 需用 App Password",
+        "secret": true,
+        "minLength": 1
+      },
+      "sender": {
+        "type": "string",
+        "title": "发件人地址",
+        "description": "留空则使用 username，可写成 名字 <a@b.com>"
+      },
+      "to": {
+        "type": "array",
+        "title": "收件人",
+        "description": "一个或多个邮箱地址",
+        "items": { "type": "string" },
+        "minItems": 1
+      },
+      "cc": {
+        "type": "array",
+        "title": "抄送",
+        "items": { "type": "string" }
+      },
+      "subject_prefix": {
+        "type": "string",
+        "title": "主题前缀",
+        "description": "自动拼在主题前面，例如 [告警]",
+        "default": ""
+      },
+      "timeout": {
+        "type": "integer",
+        "title": "连接/发送超时（秒）",
+        "default": 15,
+        "minimum": 1,
+        "maximum": 120
+      },
+      "socks5_proxy": {
+        "type": "string",
+        "title": "SOCKS5 代理（可选）",
+        "description": "形如 socks5://PROXY_HOST:PORT 或 socks5://user:pass@host:port；Gmail 直连不通时填"
+      }
+    }
+  }
+}

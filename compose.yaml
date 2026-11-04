@@ -1,0 +1,39 @@
+services:
+  msg-hub:
+    build:
+      context: .
+      args:
+        # 构建时如需国内镜像可改为 https://mirrors.aliyun.com/pypi/simple
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: irid/msg-hub:latest
+    container_name: msg-hub
+    restart: unless-stopped
+    ports:
+      # 只绑定本机；跨容器调用请走 compose 网络（见 README「接入 pi-box」）
+      - "127.0.0.1:8788:8788"
+    volumes:
+      # 渠道库、渠道配置（含凭据）、发送日志
+      - ./data:/data
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 容器内不走宿主代理（podman 会注入 http_proxy 等变量，插件 httpx 会因此被拒）；
+      # 需要代理的场景用渠道 settings 里的 socks5_proxy 按需指定
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "*"
+      no_proxy: "*"
+      # MCP(/mcp) 与 REST(/api) 的 Bearer 令牌；留空则不做鉴权（仅限本机调试）
+      MSG_HUB_TOKEN: ${MSG_HUB_TOKEN:-}
+      # 允许的 Host 头（DNS rebinding 防护），逗号分隔
+      MSG_HUB_ALLOWED_HOSTS: ${MSG_HUB_ALLOWED_HOSTS:-127.0.0.1:*,localhost:*,msg-hub:*,[::1]:*}
+      MSG_HUB_PLUGIN_TIMEOUT: ${MSG_HUB_PLUGIN_TIMEOUT:-20}
+      MSG_HUB_LOG_LEVEL: ${MSG_HUB_LOG_LEVEL:-INFO}
+
+# ── 接入 pi-box：把本服务加入 pi-box 所在的外部网络，pi-box 用 url=http://msg-hub:8788/mcp
+# networks:
+#   pi-box-net:
+#     external: true
+#     name: pi-box_default
+# （同时在上面的 service 里加：networks: [pi-box-net]）
