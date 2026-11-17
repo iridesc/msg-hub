@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STDIO_ENTRY = REPO_ROOT / "src" / "msg_hub" / "stdio.py"
+TYPES_DIR = REPO_ROOT / "src" / "msg_hub" / "types"
 
 
 class StdioClient:
@@ -80,7 +81,7 @@ def _env(tmp_path: Path) -> dict[str, str]:
     return {
         **env,
         "MSG_HUB_DATA_DIR": str(tmp_path / "data"),
-        "MSG_HUB_TYPES_DIR": str(REPO_ROOT / "types"),
+        "MSG_HUB_TYPES_DIR": str(TYPES_DIR),
     }
 
 

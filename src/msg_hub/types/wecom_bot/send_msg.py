@@ -3,9 +3,10 @@
 
 用法（由 msg-hub 主程序调用，也可手工调试）：
 
-    echo '{"message":{"text":"hello"}}' | python3 send_msg.py --config data/config/1.json
-    python3 send_msg.py --config data/config/1.json --dry-run < payload.json
+    echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' | python3 send_msg.py
+    echo '{"settings":{...},"message":{...}}' | python3 send_msg.py --dry-run
 
+配置从 stdin 的 `settings` 字段读取（契约 v2），不再需要配置文件。
 契约见项目 README「插件契约」。
 """
 
@@ -13,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 import urllib.error
@@ -38,19 +38,19 @@ def fail(code: str, message: str, retryable: bool = False, **extra: Any) -> int:
     return 1 if retryable else 2
 
 
-def load_config(path: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as fh:
-        raw = json.load(fh)
-    if isinstance(raw, dict) and ("settings" in raw or "options" in raw):
-        return dict(raw.get("settings") or {}), dict(raw.get("options") or {})
-    return dict(raw or {}), {}
-
-
 def read_request() -> dict[str, Any]:
+    """读 stdin 的单行 JSON（契约 v2：config 在 payload 里，不再读文件）。"""
     data = sys.stdin.read()
     if not data.strip():
         return {}
     return json.loads(data)
+
+
+def load_settings(request: dict[str, Any]) -> dict[str, Any]:
+    settings = request.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("payload 缺少 settings 对象（插件契约 v2）")
+    return settings
 
 
 def build_webhook(settings: dict[str, Any]) -> str:
@@ -107,14 +107,13 @@ def build_payload(message: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="企业微信群机器人发送插件")
-    parser.add_argument("--config", required=True, help="渠道配置文件路径（config/<id>.json）")
     parser.add_argument("--dry-run", action="store_true", help="只组装并校验请求，不真正发送")
     args = parser.parse_args()
 
     try:
-        settings, _options = load_config(args.config)
         request = read_request()
-    except (OSError, json.JSONDecodeError) as exc:
+        settings = load_settings(request)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         return fail("invalid_settings", f"读取配置或请求失败：{exc}")
 
     message = request.get("message") or {}

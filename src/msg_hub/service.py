@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 import uuid
@@ -9,7 +10,8 @@ from collections import deque
 from typing import Any
 
 from .audit import Audit
-from .models import MESSAGE_FORMATS, Channel, ChannelConfig, HubError, Message, now_iso
+from .auth import current_identity
+from .models import MESSAGE_FORMATS, Channel, HubError, Message, now_iso
 from .plugins import Manifest, Registry
 from .settings import Settings
 from .store import Store
@@ -30,6 +32,7 @@ class Hub:
 
     # ── 渠道查询 ────────────────────────────────────────
     def channel_status(self, channel: Channel) -> tuple[str, str | None]:
+        """渠道可用性。配置就在 Channel 对象里，不再需要额外读文件。"""
         if not channel.enabled:
             return "disabled", None
         try:
@@ -37,13 +40,7 @@ class Hub:
         except HubError as exc:
             return "broken", str(exc)
         try:
-            config = self.store.read_config(channel.id)
-        except HubError as exc:
-            return "broken", exc.message
-        if config is None:
-            return "broken", f"缺少 config/{channel.id}.json"
-        try:
-            self.registry.normalize_settings(manifest, config.settings)
+            self.registry.normalize_settings(manifest, channel.settings)
         except HubError as exc:
             return "broken", exc.message
         return "ok", None
@@ -69,7 +66,11 @@ class Hub:
     def resolve(self, ref: int | str) -> Channel:
         """按 id 或名称寻址；名称模糊匹配到多个时报错并给候选，绝不猜。"""
         if isinstance(ref, int) or (isinstance(ref, str) and ref.strip().isdigit()):
-            return self.store.get(int(ref))
+            try:
+                return self.store.get(int(ref))
+            except HubError:
+                # id 不存在时再按名称找一次（渠道名可能恰好是纯数字）
+                pass
         name = str(ref).strip()
         if not name:
             raise HubError("invalid_argument", "channel 不能为空")
@@ -98,13 +99,12 @@ class Hub:
     def get_channel(self, ref: int | str) -> dict[str, Any]:
         channel = self.resolve(ref)
         manifest = self._manifest_or_none(channel)
-        config = self.store.read_config(channel.id) or ChannelConfig()
         data = self._describe(channel)
-        data["options"] = config.options
+        data["options"] = channel.options
         if manifest is not None:
-            data["settings"] = self.registry.mask_settings(manifest, config.settings)
+            data["settings"] = self.registry.mask_settings(manifest, channel.settings)
         else:
-            data["settings"] = {key: "***" for key in config.settings}
+            data["settings"] = {key: "***" for key in channel.settings}
         return data
 
     def _manifest_or_none(self, channel: Channel) -> Manifest | None:
@@ -127,14 +127,17 @@ class Hub:
             raise HubError("invalid_argument", "name 不能为空")
         manifest = self.registry.get(str(type_name))
         normalized = self.registry.normalize_settings(manifest, settings or {})
-        config = ChannelConfig(settings=normalized, options=dict(options or {}))
-        channel = self.store.insert(name, manifest.type, enabled=enabled)
-        try:
-            self.store.write_config(channel.id, config)
-        except Exception:
-            # 配置写失败则回滚索引，避免留下"有渠道无配置"的烂数据
-            self.store.soft_delete(channel.id)
-            raise
+        # 元信息与凭据在同一个对象里：一次写入 = 原子落盘，不需要回滚
+        channel = self.store.insert(
+            Channel(
+                id=0,
+                name=name,
+                type=manifest.type,
+                enabled=enabled,
+                settings=normalized,
+                options=dict(options or {}),
+            )
+        )
         return self.get_channel(channel.id)
 
     def update_channel(
@@ -148,23 +151,23 @@ class Hub:
         enabled: bool | None = None,
     ) -> dict[str, Any]:
         channel = self.resolve(ref)
-        existing = self.store.read_config(channel.id) or ChannelConfig()
         target_type = str(type_name) if type_name else channel.type
         manifest = self.registry.get(target_type)
 
-        next_settings = existing.settings if settings is None else settings
+        next_settings = channel.settings if settings is None else settings
         if type_name and type_name != channel.type and settings is None:
             raise HubError("invalid_argument", "更换渠道类型时必须同时提供 settings")
         normalized = self.registry.normalize_settings(manifest, next_settings)
-        next_options = existing.options if options is None else dict(options)
+        next_options = channel.options if options is None else dict(options)
 
         if name is not None:
             channel.name = str(name).strip()
         channel.type = manifest.type
+        channel.settings = normalized
+        channel.options = next_options
         if enabled is not None:
             channel.enabled = bool(enabled)
         self.store.replace(channel)
-        self.store.write_config(channel.id, ChannelConfig(settings=normalized, options=next_options))
         return self.get_channel(channel.id)
 
     def delete_channel(self, ref: int | str) -> dict[str, Any]:
@@ -175,8 +178,13 @@ class Hub:
         return {"ok": True, "deleted": {"id": deleted.id, "name": deleted.name, "type": deleted.type}}
 
     # ── 发送 ────────────────────────────────────────────
-    def _check_rate(self, channel: Channel, config: ChannelConfig) -> None:
-        limit = config.rate_limit_per_min
+    def _check_rate(self, channel: Channel, *, consume: bool = True) -> None:
+        """单渠道限流。
+
+        consume=False 用于 dry_run：只校验不真发，不占配额也不被限流拦下
+        （限流保护的是下游服务，不是本地校验）。
+        """
+        limit = channel.rate_limit_per_min
         if limit is None:
             limit = self.settings.default_rate_limit
         if not limit or limit <= 0:
@@ -194,12 +202,13 @@ class Hub:
                     limit_per_min=limit,
                     retry_after_seconds=round(wait, 1),
                 )
-            bucket.append(now)
+            if consume:
+                bucket.append(now)
 
     def send(
         self,
         channel_ref: int | str,
-        text: str,
+        text: str | None,
         *,
         format: str = "plain",
         title: str | None = None,
@@ -218,14 +227,13 @@ class Hub:
             raise HubError("channel_broken", f"渠道 {channel.name} 不可用：{detail}", channel_id=channel.id)
 
         manifest = self.registry.get(channel.type)
-        config = self.store.read_config(channel.id) or ChannelConfig()
 
         text = "" if text is None else str(text)
         if not text.strip():
             raise HubError("invalid_argument", "text 不能为空")
         if len(text) > self.settings.max_text_chars:
             raise HubError(
-                "invalid_argument",
+                "text_too_long",
                 f"消息过长（{len(text)} 字符，上限 {self.settings.max_text_chars}）",
             )
         fmt = str(format or "plain").lower()
@@ -238,7 +246,7 @@ class Hub:
                 f"渠道类型 {manifest.type} 不支持 format={fmt}（支持：{formats}）",
             )
         if mention_all:
-            allowed = config.allow_mention_all and bool((manifest.capabilities or {}).get("mention_all"))
+            allowed = channel.allow_mention_all and bool((manifest.capabilities or {}).get("mention_all"))
             if not allowed:
                 raise HubError(
                     "mention_all_denied",
@@ -247,7 +255,7 @@ class Hub:
         if (mention_users or mention_mobiles) and not (manifest.capabilities or {}).get("mention"):
             raise HubError("invalid_argument", f"渠道类型 {manifest.type} 不支持 @指定成员")
 
-        self._check_rate(channel, config)
+        self._check_rate(channel, consume=not dry_run)
 
         message = Message(
             text=text,
@@ -260,17 +268,17 @@ class Hub:
         try:
             result = self.registry.invoke(
                 manifest,
-                config_path=self.store.config_path(channel.id),
-                channel={"id": channel.id, "name": channel.name, "type": channel.type},
+                settings=channel.settings,
+                channel=self._info(channel),
                 message=message,
-                options=config.options,
+                options=channel.options,
                 request_id=request_id,
                 dry_run=dry_run,
             )
         except HubError as exc:
-            self._record(channel, message, request_id, source, dry_run, exc.code, exc.message, None)
+            self._record(self._info(channel), message, request_id, source, dry_run, exc.code, exc.message, None)
             raise
-        self._record(channel, message, request_id, source, dry_run, None, "发送成功", result.elapsed_ms)
+        self._record(self._info(channel), message, request_id, source, dry_run, None, "发送成功", result.elapsed_ms)
         return {
             "ok": True,
             "request_id": request_id,
@@ -294,32 +302,40 @@ class Hub:
         """测试发送：默认 dry_run（只校验不真发），也支持对已有渠道真发一条。"""
         if settings_override is None:
             return self.send(ref, text, dry_run=dry_run, source="test")
-        # 尚未保存的配置：写临时文件交给插件
+        # 尚未保存的配置：直接走 stdin 交给插件（不再写临时文件）
         target_type = str(type_name or "")
         if not target_type:
             channel = self.resolve(ref) if ref not in ("", None) else None
             target_type = channel.type if channel else ""
         manifest = self.registry.get(target_type)
         normalized = self.registry.normalize_settings(manifest, settings_override)
-        config = ChannelConfig(settings=normalized, options=dict(options_override or {}))
-        temp_path = self.store.write_temp_config(config)
+        options = dict(options_override or {})
+        request_id = uuid.uuid4().hex[:12]
+        message = Message(text=text)
+        info = {"id": 0, "name": "(未保存的配置)", "type": manifest.type}
         try:
             result = self.registry.invoke(
                 manifest,
-                config_path=temp_path,
-                channel={"id": 0, "name": "(未保存的配置)", "type": manifest.type},
-                message=Message(text=text),
-                options=config.options,
-                request_id=uuid.uuid4().hex[:12],
+                settings=normalized,
+                channel=info,
+                message=message,
+                options=options,
+                request_id=request_id,
                 dry_run=dry_run,
             )
-        finally:
-            temp_path.unlink(missing_ok=True)
+        except HubError as exc:
+            self._record(info, message, request_id, "test", dry_run, exc.code, exc.message, None)
+            raise
+        self._record(info, message, request_id, "test", dry_run, None, "发送成功", result.elapsed_ms)
         return {"ok": True, "dry_run": dry_run, "provider": result.provider, "elapsed_ms": result.elapsed_ms}
+
+    @staticmethod
+    def _info(channel: Channel) -> dict[str, Any]:
+        return {"id": channel.id, "name": channel.name, "type": channel.type}
 
     def _record(
         self,
-        channel: Channel,
+        channel: dict[str, Any],
         message: Message,
         request_id: str,
         source: str,
@@ -328,23 +344,35 @@ class Hub:
         error_message: str,
         elapsed_ms: int | None,
     ) -> None:
+        """写审计日志。
+
+        审计失败绝不能反过来让发送失败：消息可能已经发出去了，
+        此时返回错误只会诱导调用方重试，造成重复发送。
+
+        actor 记录「是谁发的」，只记 token 的 id / 名称 / 前缀，不记完整凭据。
+        """
         preview = message.text.replace("\n", " ")[:100]
-        self.audit.append(
-            {
-                "ts": now_iso(),
-                "request_id": request_id,
-                "source": source,
-                "dry_run": dry_run,
-                "channel": {"id": channel.id, "name": channel.name, "type": channel.type},
-                "format": message.format,
-                "chars": len(message.text),
-                "text_preview": preview,
-                "ok": error_code is None,
-                "error_code": error_code,
-                "error_message": None if error_code is None else error_message,
-                "elapsed_ms": elapsed_ms,
-            }
-        )
+        actor = current_identity().audit_actor()
+        try:
+            self.audit.append(
+                {
+                    "ts": now_iso(),
+                    "request_id": request_id,
+                    "source": source,
+                    "actor": actor,
+                    "dry_run": dry_run,
+                    "channel": channel,
+                    "format": message.format,
+                    "chars": len(message.text),
+                    "text_preview": preview,
+                    "ok": error_code is None,
+                    "error_code": error_code,
+                    "error_message": None if error_code is None else error_message,
+                    "elapsed_ms": elapsed_ms,
+                }
+            )
+        except Exception as exc:  # pragma: no cover - 磁盘满/权限异常
+            print(f"[msg-hub] 审计日志写入失败（不影响发送结果）：{exc}", file=sys.stderr)
 
     # ── 日志 ────────────────────────────────────────────
     def logs(self, channel_ref: int | str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -352,3 +380,35 @@ class Hub:
         if channel_ref not in (None, ""):
             channel_id = self.resolve(channel_ref).id
         return self.audit.query(channel_id=channel_id, limit=limit)
+
+    # ── API Token 管理 ─────────────────────────────────
+    def list_tokens(self) -> list[dict[str, Any]]:
+        return [token.to_public() for token in self.store.tokens()]
+
+    def create_token(self, name: str, enabled: bool = True) -> dict[str, Any]:
+        """新建 token。返回值**包含明文**，仅此一次。"""
+        name = str(name or "").strip()
+        if not name:
+            raise HubError("invalid_argument", "token 名称不能为空")
+        token = self.store.create_token(name, enabled=enabled)
+        data = token.to_public()
+        data["secret"] = token.secret  # 只在这里出现一次
+        return data
+
+    def update_token(
+        self,
+        token_id: int,
+        *,
+        name: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        token = self.store.get_token(int(token_id))
+        if name is not None:
+            token.name = str(name).strip()
+        if enabled is not None:
+            token.enabled = bool(enabled)
+        return self.store.replace_token(token).to_public()
+
+    def delete_token(self, token_id: int) -> dict[str, Any]:
+        token = self.store.delete_token(int(token_id))
+        return {"ok": True, "deleted": {"id": token.id, "name": token.name}}

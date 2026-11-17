@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+
 import pytest
 
 from msg_hub.models import HubError, Message
@@ -83,7 +87,7 @@ def test_dry_run_invocation(cfg, tmp_path):
     config_path.write_text('{"settings": {"webhook_key": "abc"}, "options": {}}')
     result = registry.invoke(
         manifest,
-        config_path=config_path,
+        settings={"webhook_key": "abc"},
         channel={"id": 1, "name": "工作群1", "type": "wecom_bot"},
         message=Message(text="你好"),
         options={},
@@ -104,7 +108,7 @@ def test_plugin_rejects_overlong_text(cfg, tmp_path):
     with pytest.raises(HubError) as exc:
         registry.invoke(
             manifest,
-            config_path=config_path,
+            settings={"webhook_key": "abc"},
             channel={"id": 1, "name": "工作群1", "type": "wecom_bot"},
             message=Message(text="啊" * 800),  # 2400 字节 > 2048
             options={},
@@ -112,3 +116,58 @@ def test_plugin_rejects_overlong_text(cfg, tmp_path):
             dry_run=True,
         )
     assert exc.value.code == "invalid_argument"
+
+
+def test_plugin_env_does_not_leak_service_secrets(cfg, monkeypatch):
+    """插件子进程不该拿到主服务的令牌，也不该继承宿主代理变量。"""
+    monkeypatch.setenv("MSG_HUB_TOKEN", "super-secret-token")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:11001")
+    env = Registry(cfg)._plugin_env("req-1")
+    assert "MSG_HUB_TOKEN" not in env
+    assert "http_proxy" not in env
+    assert env["MSG_HUB_REQUEST_ID"] == "req-1"
+    assert env["MSG_HUB_DATA_DIR"] == str(cfg.data_dir)
+
+
+def test_email_plugin_with_socks_reports_error_instead_of_crashing(cfg, tmp_path):
+    """配了 socks5_proxy 但环境没装 PySocks 时，插件要返回结构化错误，而不是抛 traceback。"""
+    registry = Registry(cfg)
+    manifest = registry.get("email")
+    config_path = tmp_path / "1.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "settings": {
+                    "smtp_host": "smtp.qq.com",
+                    "username": "me@qq.com",
+                    "password": "auth-code",
+                    "to": ["a@b.c"],
+                    "socks5_proxy": "socks5://127.0.0.1:1",
+                },
+                "options": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(manifest.entry), "--dry-run"],
+        input=json.dumps(
+            {
+                "settings": {
+                    "smtp_host": "smtp.qq.com",
+                    "username": "me@qq.com",
+                    "password": "auth-code",
+                    "to": ["a@b.c"],
+                    "socks5_proxy": "socks5://127.0.0.1:1",
+                },
+                "message": {"text": "hi"},
+            }
+        ),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.stdout.strip(), f"插件没有任何输出：{proc.stderr[-500:]}"
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["ok"] is False
+    assert payload["error"]["code"] in ("invalid_settings", "send_failed")

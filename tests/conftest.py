@@ -14,6 +14,7 @@ from msg_hub.service import Hub
 from msg_hub.settings import Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+TYPES_DIR = REPO_ROOT / "src" / "msg_hub" / "types"
 
 
 @pytest.fixture()
@@ -22,8 +23,9 @@ def cfg(tmp_path: Path) -> Settings:
     return dataclasses.replace(
         base,
         data_dir=tmp_path / "data",
-        types_dir=REPO_ROOT / "types",
-        token="",
+        types_dir=TYPES_DIR,
+        admin_user="admin",
+        admin_password="test-admin-password",
         default_rate_limit=0,
     )
 

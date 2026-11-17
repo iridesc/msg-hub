@@ -7,15 +7,16 @@
 
 调用契约（子进程，进程隔离）：
 
-    argv:  <python> send_msg.py --config <config/<id>.json 或临时文件> [--dry-run]
+    argv:  <python> send_msg.py [--dry-run]
     stdin: 单行 JSON
            {
-             "version": 1,
+             "version": 2,            # v2：配置改走 stdin，不再传 --config 路径
              "request_id": "...",
              "channel": {"id": 1, "name": "工作群1", "type": "wecom_bot"},
+             "settings": {...},       # 该类型的配置（凭据），已过 schema 校验
              "message": {"text": "...", "format": "plain|markdown", "title": null,
                          "mention_users": [], "mention_mobiles": [], "mention_all": false},
-             "options": {...},          # config/<id>.json 的 options
+             "options": {...},        # 跨类型护栏
              "dry_run": false,
              "cache_dir": "<data>/.cache"
            }
@@ -23,6 +24,11 @@
            {"ok": true,  "provider": "wecom_bot", "message_id": "...", "elapsed_ms": 231, "raw": {...}}
            {"ok": false, "error": {"code": "send_failed", "message": "...", "retryable": false}}
     exit:   0 成功 / 1 可重试失败 / 2 不可重试失败
+
+为什么配置走 stdin 而不是 `--config <file>`：配置已经合并进 state.json，
+如果还传文件路径，主程序就得为**每次发送**写一个临时文件再删，
+反而比原来更糟（多一次写盘 + 多一个临时文件泄露面）。走 stdin 后
+插件变成纯函数：stdin 进 → stdout 出，不碰任何文件。
 """
 
 from __future__ import annotations
@@ -41,6 +47,23 @@ from .models import HubError, Message
 from .settings import Settings
 
 MANIFEST_REQUIRED = ("type", "name", "entry", "settings_schema")
+
+# 插件调用契约版本：v2 起配置走 stdin，不再传 --config 文件路径
+PLUGIN_CONTRACT_VERSION = 2
+
+# 子进程只继承这些环境变量：主服务的令牌（MSG_HUB_TOKEN）等无关变量不应泄给插件
+_ENV_PASSTHROUGH = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "PYTHONPATH",
+    "PYTHONHOME",
+)
 
 
 @dataclass
@@ -233,11 +256,25 @@ class Registry:
         return masked
 
     # ── 调用 ────────────────────────────────────────────
+    def _plugin_env(self, request_id: str) -> dict[str, str]:
+        """插件子进程的环境变量。
+
+        只透传必要项：主服务的令牌（MSG_HUB_TOKEN）等无关变量不应泄给插件，
+        代理变量也不透传（插件要代理必须在自己的 settings 里显式配置）。
+        """
+        return {
+            **{key: value for key, value in os.environ.items() if key in _ENV_PASSTHROUGH},
+            "MSG_HUB_DATA_DIR": str(self.settings.data_dir),
+            "MSG_HUB_TYPES_DIR": str(self.settings.types_dir),
+            "MSG_HUB_CACHE_DIR": str(self.settings.cache_dir),
+            "MSG_HUB_REQUEST_ID": request_id,
+        }
+
     def invoke(
         self,
         manifest: Manifest,
         *,
-        config_path: Path,
+        settings: dict[str, Any],
         channel: dict[str, Any],
         message: Message,
         options: dict[str, Any],
@@ -245,24 +282,19 @@ class Registry:
         dry_run: bool,
     ) -> PluginResult:
         payload = {
-            "version": 1,
+            "version": PLUGIN_CONTRACT_VERSION,
             "request_id": request_id,
             "channel": channel,
+            "settings": settings,
             "message": message.to_dict(),
             "options": options,
             "dry_run": dry_run,
             "cache_dir": str(self.settings.cache_dir),
         }
-        argv = [sys.executable, str(manifest.entry), "--config", str(config_path)]
+        argv = [sys.executable, str(manifest.entry)]
         if dry_run:
             argv.append("--dry-run")
-        env = {
-            **os.environ,
-            "MSG_HUB_DATA_DIR": str(self.settings.data_dir),
-            "MSG_HUB_TYPES_DIR": str(self.settings.types_dir),
-            "MSG_HUB_CACHE_DIR": str(self.settings.cache_dir),
-            "MSG_HUB_REQUEST_ID": request_id,
-        }
+        env = self._plugin_env(request_id)
         started = time.monotonic()
         try:
             proc = subprocess.run(

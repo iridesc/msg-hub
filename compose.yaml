@@ -24,10 +24,14 @@ services:
       https_proxy: ""
       NO_PROXY: "*"
       no_proxy: "*"
-      # MCP(/mcp) 与 REST(/api) 的 Bearer 令牌；留空则不做鉴权（仅限本机调试）
-      MSG_HUB_TOKEN: ${MSG_HUB_TOKEN:-}
+      # 管理面凭据（Basic）。密码**必填**：为空时 compose 直接报错
+      MSG_HUB_ADMIN_USER: ${MSG_HUB_ADMIN_USER:-admin}
+      MSG_HUB_ADMIN_PASSWORD: ${MSG_HUB_ADMIN_PASSWORD:?未设置，请在 .env 里填上 MSG_HUB_ADMIN_PASSWORD（openssl rand -hex 24）}
+      # API Token 不用环境变量：存在 data/state.json，通过 dashboard 管理
       # 允许的 Host 头（DNS rebinding 防护），逗号分隔
       MSG_HUB_ALLOWED_HOSTS: ${MSG_HUB_ALLOWED_HOSTS:-127.0.0.1:*,localhost:*,msg-hub:*,[::1]:*}
+      # Dashboard（/dashboard）是否开放；它能启停/删除渠道，介意就设 0
+      MSG_HUB_DASHBOARD: ${MSG_HUB_DASHBOARD:-1}
       MSG_HUB_PLUGIN_TIMEOUT: ${MSG_HUB_PLUGIN_TIMEOUT:-20}
       MSG_HUB_LOG_LEVEL: ${MSG_HUB_LOG_LEVEL:-INFO}
 

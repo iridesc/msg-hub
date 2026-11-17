@@ -13,13 +13,21 @@ from .settings import settings
 
 def main() -> int:
     settings.ensure_dirs()
-    if not settings.auth_enabled:
-        print("[msg-hub] 警告：未设置 MSG_HUB_TOKEN，/mcp 与 /api 处于无鉴权状态", file=sys.stderr)
+
+    # 鉴权自检：令牌没配就拒绝启动（HTTP 服务能发消息/删渠道，不能裸奔）
+    check = settings.check_auth()
+    if not check.ok:
+        print("[msg-hub] 拒绝启动：鉴权未配置\n", file=sys.stderr)
+        print(check.render(), file=sys.stderr)
+        return 1
+    for warning in check.warnings:
+        print(f"[msg-hub] 警告：{warning}", file=sys.stderr)
+
     app = build_app(settings)
     print(
         f"[msg-hub] v{__version__} 启动：http://{settings.host}:{settings.port}  "
-        f"MCP=/mcp  REST=/api  数据目录={settings.data_dir}  类型目录={settings.types_dir}  "
-        f"鉴权={'Bearer' if settings.auth_enabled else '关闭'}",
+        f"MCP=/mcp  REST=/api  Dashboard=/dashboard  数据目录={settings.data_dir}  "
+        f"类型目录={settings.types_dir}  鉴权=Basic(管理员 {settings.admin_user}) + Bearer(API Token)",
         file=sys.stderr,
         flush=True,
     )

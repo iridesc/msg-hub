@@ -3,7 +3,9 @@
 
 用法（由 msg-hub 主程序调用，也可手工调试）：
 
-    echo '{"message":{"text":"hello","format":"html"}}' | python3 send_msg.py --config data/config/2.json
+    echo '{"settings":{"smtp_host":"...",...},"message":{"text":"hello"}}' | python3 send_msg.py
+
+配置从 stdin 的 `settings` 字段读取（契约 v2），不再需要配置文件。
 
 注意：
 - QQ / 163 等邮箱的 password 必须填「授权码」，不是登录密码
@@ -36,24 +38,29 @@ def fail(code: str, message: str, retryable: bool = False, **extra: Any) -> int:
     return 1 if retryable else 2
 
 
-def load_config(path: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    with open(path, "r", encoding="utf-8") as fh:
-        raw = json.load(fh)
-    if isinstance(raw, dict) and ("settings" in raw or "options" in raw):
-        return dict(raw.get("settings") or {}), dict(raw.get("options") or {})
-    return dict(raw or {}), {}
-
-
 def read_request() -> dict[str, Any]:
+    """读 stdin 的单行 JSON（契约 v2：config 在 payload 里，不再读文件）。"""
     data = sys.stdin.read()
     if not data.strip():
         return {}
     return json.loads(data)
 
 
+def load_settings(request: dict[str, Any]) -> dict[str, Any]:
+    settings = request.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("payload 缺少 settings 对象（插件契约 v2）")
+    return settings
+
+
 def apply_socks_proxy(proxy_url: str) -> None:
     """在子进程内把 socket 全局替换成 SOCKS5 socket（一次性进程，可接受）。"""
-    import socks  # PySocks
+    try:
+        import socks  # PySocks
+    except ImportError as exc:  # 零依赖环境（如 pi-box 容器）没装 PySocks
+        raise ValueError(
+            "当前环境没有安装 PySocks，无法使用 socks5_proxy（pip install PySocks，或改用直连）"
+        ) from exc
 
     match = re.match(r"^socks5h?://(?:(?P<user>[^:@/]+)(?::(?P<pwd>[^@/]*))?@)?(?P<host>[^:/]+):(?P<port>\d+)/?$", proxy_url.strip())
     if not match:
@@ -119,14 +126,13 @@ def connect(settings: dict[str, Any]) -> smtplib.SMTP:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="SMTP 邮件发送插件")
-    parser.add_argument("--config", required=True, help="渠道配置文件路径（config/<id>.json）")
     parser.add_argument("--dry-run", action="store_true", help="只连到 SMTP 服务器验证网络，不登录、不发送")
     args = parser.parse_args()
 
     try:
-        settings, _options = load_config(args.config)
         request = read_request()
-    except (OSError, json.JSONDecodeError) as exc:
+        settings = load_settings(request)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         return fail("invalid_settings", f"读取配置或请求失败：{exc}")
 
     for required in ("smtp_host", "username", "password", "to"):

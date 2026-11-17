@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+build/
+dist/
 
 # 运行期数据：渠道库、凭据、发送日志
 data/*

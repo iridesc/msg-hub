@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from .dashboard import summarize_channels, summarize_sends
 from .models import HubError
 from .service import Hub
 from .settings import Settings
@@ -23,8 +24,11 @@ STATUS_BY_CODE = {
     "channel_broken": 409,
     "rate_limited": 429,
     "mention_all_denied": 403,
+    "forbidden": 403,
     "text_too_long": 400,
     "plugin_timeout": 504,
+    "unauthorized": 401,
+    "state_broken": 500,
 }
 
 
@@ -56,7 +60,7 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
             {
                 "status": "ok",
                 "version": settings.version,
-                "auth": "bearer" if settings.auth_enabled else "none",
+                "auth": "basic+bearer" if settings.auth_enabled else "none",
                 "types": [manifest["type"] for manifest in hub.types()],
                 "channels": {
                     "total": len(channels),
@@ -69,6 +73,10 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
 
     async def list_types(_request: Request) -> Response:
         return ok({"types": hub.types()})
+
+    async def stats(_request: Request) -> Response:
+        """dashboard 用的聚合：渠道状态 + 最近发送情况。"""
+        return ok({"channels": summarize_channels(hub), "sends": summarize_sends(hub)})
 
     async def list_channels(request: Request) -> Response:
         include_deleted = request.query_params.get("include_deleted") in ("1", "true", "yes")
@@ -122,6 +130,10 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
                 request.path_params["ref"],
                 str(body.get("text") or "这是一条来自 msg-hub 的测试消息"),
                 dry_run=bool(body.get("dry_run", True)),
+                # 与 MCP 的 channel_test 对齐：可以拿「尚未保存」的 settings 来试
+                settings_override=body.get("settings"),
+                options_override=body.get("options"),
+                type_name=body.get("type"),
             )
         except HubError as exc:
             return fail(exc)
@@ -134,7 +146,7 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
         try:
             result = hub.send(
                 body["channel"],
-                str(body.get("text") or ""),
+                body.get("text"),
                 format=str(body.get("format") or "plain"),
                 title=body.get("title"),
                 mention_users=body.get("mention_users"),
@@ -158,9 +170,48 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
             return fail(HubError("invalid_argument", "limit 必须是整数"))
         return ok({"logs": records})
 
+    # ── API Token（只允许管理员）────────────────────────
+    async def list_tokens(_request: Request) -> Response:
+        return ok({"tokens": hub.list_tokens()})
+
+    async def create_token(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            token = hub.create_token(
+                str(body.get("name") or ""),
+                enabled=bool(body.get("enabled", True)),
+            )
+        except HubError as exc:
+            return fail(exc)
+        # 明文只在这一个响应里出现，之后只能看到前缀
+        return ok({"ok": True, "token": token}, status=201)
+
+    async def update_token(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            token = hub.update_token(
+                int(request.path_params["token_id"]),
+                name=body.get("name"),
+                enabled=body.get("enabled"),
+            )
+        except HubError as exc:
+            return fail(exc)
+        except ValueError:
+            return fail(HubError("invalid_argument", "token_id 必须是整数"))
+        return ok({"ok": True, "token": token})
+
+    async def delete_token(request: Request) -> Response:
+        try:
+            return ok(hub.delete_token(int(request.path_params["token_id"])))
+        except HubError as exc:
+            return fail(exc)
+        except ValueError:
+            return fail(HubError("invalid_argument", "token_id 必须是整数"))
+
     return [
         Route("/health", health, methods=["GET"]),
         Route("/api/types", list_types, methods=["GET"]),
+        Route("/api/stats", stats, methods=["GET"]),
         Route("/api/channels", list_channels, methods=["GET"]),
         Route("/api/channels", create_channel, methods=["POST"]),
         Route("/api/channels/{ref}", get_channel, methods=["GET"]),
@@ -169,4 +220,8 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
         Route("/api/channels/{ref}/test", test_channel, methods=["POST"]),
         Route("/api/send", send, methods=["POST"]),
         Route("/api/logs", logs, methods=["GET"]),
+        Route("/api/tokens", list_tokens, methods=["GET"]),
+        Route("/api/tokens", create_token, methods=["POST"]),
+        Route("/api/tokens/{token_id}", update_token, methods=["PATCH"]),
+        Route("/api/tokens/{token_id}", delete_token, methods=["DELETE"]),
     ]

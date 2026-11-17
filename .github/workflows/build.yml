@@ -17,7 +17,132 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 1) 静态检查 + 单元测试
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev,http]" ruff
+
+      - name: Lint
+        run: ruff check src/msg_hub tests --select=F,E9
+
+      - name: Run tests
+        run: pytest -q
+
+  # 2) 构建 wheel 并校验包内容
+  #    内置渠道类型插件（types/）和 dashboard 页面（web/）走 package-data 分发，
+  #    一旦打包配置退化，pip 装出来就没有插件 / 没有看板 —— 这里直接拦下来。
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel
+        run: |
+          pip install -U build
+          python -m build --wheel
+
+      - name: Verify packaged files
+        run: |
+          python - <<'PY'
+          import glob, sys, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = [
+              "msg_hub/types/wecom_bot/manifest.json",
+              "msg_hub/types/wecom_bot/send_msg.py",
+              "msg_hub/types/email/manifest.json",
+              "msg_hub/types/email/send_msg.py",
+              "msg_hub/web/index.html",
+          ]
+          missing = [path for path in required if path not in names]
+          if missing:
+              print(f"wheel 缺少文件：{missing}", file=sys.stderr)
+              print(f"实际内容：{sorted(names)}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"wheel OK：{wheel}（{len(names)} 个文件）")
+          PY
+
+      - name: Smoke-test installed wheel
+        run: |
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/pip install -q --no-deps dist/*.whl
+          # 不指定 MSG_HUB_TYPES_DIR 也要能发现内置类型
+          /tmp/wheel-venv/bin/python -c "
+          from msg_hub.settings import Settings
+          from msg_hub.plugins import Registry
+          types = sorted(m.type for m in Registry(Settings()).all())
+          assert types == ['email', 'wecom_bot'], types
+          print('内置类型发现正常：', types)
+          "
+
+  # 3) 单架构镜像冒烟：能起来、/health 通、无密码时拒绝启动
+  smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: msg-hub:smoke
+          cache-from: type=gha
+
+      - name: Image starts and serves /health
+        run: |
+          docker run -d --name smoke -p 8788:8788 \
+            -e MSG_HUB_ADMIN_PASSWORD=smoke-test-password-0123 \
+            msg-hub:smoke
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8788/health -o /tmp/health.json && break
+            sleep 1
+          done
+          cat /tmp/health.json
+          python -c "
+          import json
+          body = json.load(open('/tmp/health.json'))
+          assert body['status'] == 'ok', body
+          assert body['types'] == ['email', 'wecom_bot'], body
+          print('health OK：auth =', body['auth'])
+          "
+          docker rm -f smoke
+
+      - name: Image refuses to start without auth
+        run: |
+          # 鉴权缺失必须拒绝启动，而不是裸奔
+          if docker run --rm -e MSG_HUB_ADMIN_PASSWORD= msg-hub:smoke; then
+            echo "错误：没有管理员密码却启动成功了" >&2
+            exit 1
+          fi
+          echo "无密码时正确拒绝启动"
+
+  # 4) 多架构构建并推送（amd64 + arm64，可直接跑在 ARM 的 NAS 上）
   build:
+    needs: [test, package, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,6 +150,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -53,6 +181,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

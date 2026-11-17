@@ -5,6 +5,7 @@ import json
 from mcp.server.mcpserver.exceptions import ToolError
 
 from msg_hub.mcp_server import build_mcp
+from msg_hub.tools import TOOLS
 
 WECOM_SETTINGS = {"webhook_key": "693a-test-key-abcdefg"}
 
@@ -38,6 +39,38 @@ async def test_tool_list_exposes_full_surface(cfg, hub):
         "channel_test",
         "message_logs",
     }
+
+
+async def test_sdk_advertises_the_same_contract_as_stdio(hub):
+    """两个前端必须暴露同一份工具契约。
+
+    契约的唯一来源是 msg_hub.tools；stdio 直接用它，SDK 侧由它翻译而来。
+    这里比对两边广告给模型的 schema，防止以后又漂移出两份。
+    """
+    mcp = build_mcp(hub)
+    sdk_tools = {tool.name: tool.input_schema for tool in await mcp.list_tools()}
+    contract = {spec.name: spec.input_schema() for spec in TOOLS}
+    assert set(sdk_tools) == set(contract)
+    for name, schema in contract.items():
+        advertised = sdk_tools[name]
+        assert advertised.get("required", []) == schema.get("required", []), name
+        assert set(advertised["properties"]) == set(schema["properties"]), name
+        for param, prop in schema["properties"].items():
+            assert advertised["properties"][param].get("default") == prop.get("default"), f"{name}.{param}"
+
+
+async def test_mention_param_accepts_single_string(hub):
+    """@成员既接受数组也接受单个字符串（两个前端行为一致）。"""
+    mcp = build_mcp(hub)
+    await mcp.call_tool(
+        "channel_create",
+        {"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
+    )
+    result = await mcp.call_tool(
+        "send_message",
+        {"channel": 1, "text": "hi", "mention_users": "zhangsan", "dry_run": True},
+    )
+    assert _data(result)["ok"] is True
 
 
 async def test_types_tool_returns_schema(cfg, hub):

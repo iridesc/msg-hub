@@ -16,21 +16,18 @@ ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 WORKDIR /app
 
 # 1) 先装依赖（利用构建缓存）
+#    jsonschema / httpx 由 mcp 间接带入，不用单独声明；PySocks 只在 email 渠道
+#    配了 socks5_proxy 时才用到
 COPY pyproject.toml README.md ./
 COPY src/msg_hub/__init__.py src/msg_hub/__init__.py
 RUN pip install --no-cache-dir -U pip setuptools wheel \
- && pip install --no-cache-dir "mcp>=2.3,<3" "starlette>=0.40" "uvicorn>=0.30" \
-      "jsonschema>=4.20" "httpx>=0.27" "PySocks>=1.7"
+ && pip install --no-cache-dir "mcp>=2.3,<3" "starlette>=0.40" "uvicorn>=0.30" "PySocks>=1.7"
 
-# 2) 再装源码
+# 2) 再装源码（内置渠道类型插件随包分发，无需单独 COPY）
 COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps .
 
-# 3) 渠道类型插件（每个类型一个目录：manifest.json + send_msg.py）
-COPY types/ /app/types/
-
 ENV MSG_HUB_DATA_DIR=/data \
-    MSG_HUB_TYPES_DIR=/app/types \
     MSG_HUB_HOST=0.0.0.0 \
     MSG_HUB_PORT=8788
 

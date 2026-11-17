@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "多渠道路由的消息发送 MCP 服务：渠道增删改查 + 统一发送"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-# 核心零第三方依赖：stdio 模式（python -m msg_hub.stdio）可在仅有 python3 的
+# 核心零第三方依赖：stdio 模式（python src/msg_hub/stdio.py）可在仅有 python3 的
 # 环境直接运行（例如 pi-box 容器）；HTTP 服务模式装 [http] extra。
 dependencies = []
 
@@ -25,6 +25,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# 内置渠道类型插件与 dashboard 页面随包分发：pip install 后开箱即用
+[tool.setuptools.package-data]
+msg_hub = ["types/*/manifest.json", "types/*/send_msg.py", "web/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

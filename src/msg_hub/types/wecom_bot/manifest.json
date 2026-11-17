@@ -1,7 +1,7 @@
 {
   "type": "wecom_bot",
   "name": "企业微信群机器人",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "通过企业微信群机器人 webhook 向指定群发送消息。使用群机器人 key 即可，无需企业管理员权限；支持纯文本与 markdown，纯文本支持 @成员 / @所有人。",
   "entry": "send_msg.py",
   "capabilities": {

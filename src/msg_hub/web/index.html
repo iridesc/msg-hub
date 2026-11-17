@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>msg-hub · 渠道与发送情况</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --line: #2a2f3a;
+    --fg: #e6e8ee; --muted: #8b93a7; --accent: #4c8dff;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149; --off: #6e7681;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { font-weight: 600; font-size: 16px; }
+  .brand .sub { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
+  .grow { flex: 1; }
+  button {
+    font: inherit; color: var(--fg); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--err); }
+  button.link { background: none; border: none; color: var(--accent); padding: 2px 6px; }
+  .warn {
+    color: var(--warn); border: 1px solid var(--warn); border-radius: 6px;
+    padding: 3px 10px; font-size: 12px;
+  }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 20px 0; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; min-width: 118px;
+  }
+  .stat .n { font-size: 20px; font-weight: 600; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .n.ok { color: var(--ok); } .stat .n.err { color: var(--err); }
+  .stat .n.warn { color: var(--warn); } .stat .n.off { color: var(--off); }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px 20px 28px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .panel-head {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  ul { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow: auto; }
+  li.chan { border-bottom: 1px solid var(--line); padding: 9px 14px; cursor: pointer; }
+  li.chan:last-child { border-bottom: none; }
+  li.chan:hover { background: var(--panel-2); }
+  li.chan.sel { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .name { font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--ok); } .dot.disabled { background: var(--off); }
+  .dot.broken { background: var(--err); }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+  .body { padding: 12px 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
+  .table-wrap { overflow: auto; max-height: 56vh; }
+  .pill { font-size: 11px; border-radius: 10px; padding: 1px 8px; border: 1px solid var(--line); }
+  .pill.ok { color: var(--ok); border-color: var(--ok); }
+  .pill.err { color: var(--err); border-color: var(--err); }
+  .pill.dry { color: var(--accent); border-color: var(--accent); }
+  pre { margin: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+        padding: 8px 10px; overflow: auto; font-size: 12px; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex;
+           align-items: center; justify-content: center; z-index: 20; padding: 20px; }
+  .modal .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    width: 560px; max-width: 100%; max-height: 88vh; display: flex; flex-direction: column;
+  }
+  .modal .card > h3 { margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .modal .content { padding: 14px 16px; overflow: auto; }
+  .modal .foot { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  label { display: block; margin-bottom: 12px; }
+  label .lb { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  label .lb b { color: var(--err); font-weight: 500; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    width: 100%; font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px;
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .err-msg { color: var(--err); font-size: 12px; margin-bottom: 10px; }
+  .hidden { display: none !important; }
+  .switch { position: relative; width: 34px; height: 18px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span { position: absolute; inset: 0; background: var(--off); border-radius: 9px; cursor: pointer; transition: .15s; }
+  .switch span::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
+                         background: #fff; border-radius: 50%; transition: .15s; }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::before { transform: translateX(16px); }
+  .sec { color: var(--muted); font-size: 12px; margin: 16px 0 8px; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">msg-hub<span class="sub">渠道与发送情况</span></div>
+  <span id="auth-note" class="warn hidden"></span>
+  <div class="grow"></div>
+  <button id="btn-tab-channels" class="primary">渠道</button>
+  <button id="btn-tab-tokens">API Token</button>
+  <button id="btn-refresh">刷新</button>
+  <button id="btn-add" class="primary">添加渠道</button>
+</header>
+
+<section id="stats" class="stats"></section>
+
+<main id="view-channels">
+  <aside class="panel">
+    <div class="panel-head"><h2>渠道</h2><span id="channel-count" class="muted"></span></div>
+    <ul id="channel-list"></ul>
+  </aside>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2 id="detail-title">发送日志</h2>
+      <span id="detail-sub" class="muted"></span>
+      <span class="grow"></span>
+      <button id="btn-all-logs" class="link hidden">看全部渠道</button>
+    </div>
+    <div id="detail" class="body hidden"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>时间</th><th>调用者</th><th>来源</th><th>渠道</th><th>格式</th><th>结果</th>
+          <th>错误</th><th>内容</th><th>耗时</th>
+        </tr></thead>
+        <tbody id="logs"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<main id="view-tokens" class="hidden" style="grid-template-columns: 1fr">
+  <section class="panel">
+    <div class="panel-head">
+      <h2>API Token</h2>
+      <span class="muted">用于外部系统发消息；<b>只能发消息</b>，不能管理渠道 / 看日志</span>
+      <span class="grow"></span>
+      <button id="btn-new-token" class="primary">生成 Token</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>#</th><th>名称</th><th>前缀</th><th>状态</th>
+          <th>创建时间</th><th>最后使用</th><th>次数</th><th>操作</th>
+        </tr></thead>
+        <tbody id="token-rows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="card">
+    <h3>添加渠道</h3>
+    <div class="content">
+      <div id="form-err" class="err-msg hidden"></div>
+      <label><span class="lb">渠道类型</span><select id="f-type"></select></label>
+      <label><span class="lb">渠道名称 <b>*</b></span><input type="text" id="f-name" placeholder="如：运维告警群"></label>
+      <div id="f-settings"></div>
+      <div class="sec">护栏（跨类型通用）</div>
+      <label class="row"><span class="switch"><input type="checkbox" id="f-allow-all"><span></span></span>
+        <span style="margin-left:8px">允许 @所有人（默认禁止）</span></label>
+      <label><span class="lb">每分钟发送上限</span><input type="number" id="f-rate" value="30" min="0"></label>
+    </div>
+    <div class="foot">
+      <button id="btn-cancel">取消</button>
+      <button id="btn-submit" class="primary">创建</button>
+    </div>
+  </div>
+</div>
+
+<div id="secret-modal" class="modal hidden">
+  <div class="card">
+    <h3>Token 已生成 · <span id="secret-name"></span></h3>
+    <div class="content">
+      <div class="err-msg" style="color:var(--warn)">
+        完整值只显示这一次，关闭后只能看到前缀。请现在复制给调用方。
+      </div>
+      <pre id="secret-value" style="word-break:break-all;user-select:all"></pre>
+      <div class="hint" style="margin-top:8px">
+        用法：<code>Authorization: Bearer &lt;上面的值&gt;</code>
+        （只能发消息，不能管理渠道或看日志）
+      </div>
+    </div>
+    <div class="foot">
+      <button id="btn-secret-copy">复制</button>
+      <button id="btn-secret-close" class="primary">我已保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let CHANNELS = [];
+let TYPES = [];
+let LOGS = [];
+let SELECTED = null;   // 当前选中的渠道 id
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+  if (!response.ok) {
+    const error = (data && data.error) || {};
+    const err = new Error(error.message || ("HTTP " + response.status));
+    err.code = error.code;
+    err.details = error.details;
+    throw err;
+  }
+  return data;
+}
+
+const toast = (message, isError) => {
+  const node = document.createElement("div");
+  node.className = "warn";
+  node.style.cssText = "position:fixed;right:20px;bottom:20px;z-index:30";
+  if (!isError) node.style.borderColor = "var(--ok)";
+  node.style.color = isError ? "var(--err)" : "var(--ok)";
+  node.textContent = message;
+  document.body.appendChild(node);
+  setTimeout(() => node.remove(), 3200);
+};
+
+// ── 渲染 ────────────────────────────────────────────────
+function renderStats(stats) {
+  const c = stats.channels, s = stats.sends;
+  const rate = s.sampled ? Math.round((s.ok / s.sampled) * 100) : 0;
+  $("stats").innerHTML = [
+    ["渠道总数", c.total, ""],
+    ["可用", c.ok, "ok"],
+    ["已停用", c.disabled, "off"],
+    ["损坏", c.broken, "err"],
+    ["发送成功", s.ok, "ok"],
+    ["发送失败", s.failed, s.failed ? "err" : ""],
+    ["成功率", s.sampled ? rate + "%" : "—", ""],
+  ].map(([k, n, cls]) =>
+    `<div class="stat"><div class="n ${cls}">${esc(n)}</div><div class="k">${esc(k)}</div></div>`
+  ).join("");
+}
+
+function renderChannels() {
+  $("channel-count").textContent = CHANNELS.length + " 个";
+  $("channel-list").innerHTML = CHANNELS.map((ch) => `
+    <li class="chan ${SELECTED === ch.id ? "sel" : ""}" data-id="${ch.id}">
+      <div class="row">
+        <span class="dot ${ch.status}"></span>
+        <span class="name">${esc(ch.name)}</span>
+        <span class="grow"></span>
+        <span class="tag">${esc(ch.type)}</span>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <span class="muted">#${ch.id}</span>
+        <span class="grow"></span>
+        <span class="muted">${ch.status === "broken" ? esc(ch.status_detail || "配置损坏")
+          : ch.enabled ? "已启用" : "已停用"}</span>
+        <label class="switch" title="启用/停用">
+          <input type="checkbox" data-toggle="${ch.id}" ${ch.enabled ? "checked" : ""}>
+          <span></span>
+        </label>
+        <button class="link danger" data-del="${ch.id}">删除</button>
+      </div>
+    </li>`).join("") || `<li class="muted" style="padding:14px">还没有渠道，点右上角「添加渠道」</li>`;
+}
+
+function actorLabel(actor) {
+  if (!actor) return `<span class="muted">—</span>`;
+  if (actor.type === "admin") return `<span class="tag">管理员</span>`;
+  return `<span class="tag" title="token #${esc(actor.id)} ${esc(actor.prefix || "")}">${esc(actor.name || "token")}</span>`;
+}
+
+function renderLogs(records) {
+  $("logs").innerHTML = records.map((r) => {
+    const info = r.channel || {};
+    const result = r.dry_run ? `<span class="pill dry">dry_run</span>`
+      : (r.ok ? `<span class="pill ok">成功</span>` : `<span class="pill err">失败</span>`);
+    return `<tr>
+      <td class="muted">${esc((r.ts || "").replace("T", " ").slice(0, 19))}</td>
+      <td>${actorLabel(r.actor)}</td>
+      <td class="muted">${esc(r.source || "")}</td>
+      <td>${esc(info.name || "")}</td>
+      <td class="muted">${esc(r.format || "")}</td>
+      <td>${result}</td>
+      <td class="muted">${esc(r.error_code || "")}</td>
+      <td>${esc(r.text_preview || "")}</td>
+      <td class="muted">${r.elapsed_ms != null ? r.elapsed_ms + "ms" : ""}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted" style="padding:14px">还没有发送记录</td></tr>`;
+}
+
+// ── Token 视图 ──────────────────────────────────────────
+function renderTokens(tokens) {
+  $("token-rows").innerHTML = tokens.map((t) => `
+    <tr data-token="${t.id}">
+      <td class="muted">${t.id}</td>
+      <td><span class="name">${esc(t.name)}</span></td>
+      <td><code class="muted">${esc(t.prefix)}…</code></td>
+      <td>${t.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill err">已禁用</span>'}</td>
+      <td class="muted">${esc((t.created_at || "").replace("T", " ").slice(0, 19))}</td>
+      <td class="muted">${esc((t.last_used_at || "—").replace("T", " ").slice(0, 19))}</td>
+      <td class="muted">${t.usage_count || 0}</td>
+      <td>
+        <label class="switch" title="启用/禁用" style="display:inline-block;vertical-align:middle">
+          <input type="checkbox" data-token-toggle="${t.id}" ${t.enabled ? "checked" : ""}>
+          <span></span>
+        </label>
+        <button class="link" data-token-rename="${t.id}" data-name="${esc(t.name)}">重命名</button>
+        <button class="link danger" data-token-del="${t.id}" data-name="${esc(t.name)}">删除</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="8" class="muted" style="padding:14px">还没有 token，点右上角「生成 Token」</td></tr>`;
+}
+
+async function loadTokens() {
+  try {
+    const data = await api("/api/tokens");
+    renderTokens(data.tokens || []);
+  } catch (err) {
+    toast(err.message || "加载 token 失败", true);
+  }
+}
+
+function switchView(which) {
+  const tokens = which === "tokens";
+  $("view-channels").classList.toggle("hidden", tokens);
+  $("view-tokens").classList.toggle("hidden", !tokens);
+  $("btn-tab-channels").classList.toggle("primary", !tokens);
+  $("btn-tab-tokens").classList.toggle("primary", tokens);
+  $("btn-add").classList.toggle("hidden", tokens);
+  if (tokens) loadTokens();
+}
+
+function renderLogTable() {
+  const records = SELECTED == null ? LOGS : LOGS.filter((r) => (r.channel || {}).id === SELECTED);
+  const name = SELECTED == null ? "全部渠道" : (CHANNELS.find((c) => c.id === SELECTED) || {}).name || "";
+  $("detail-title").textContent = "发送日志";
+  $("detail-sub").textContent = `${name} · 最近 ${records.length} 条`;
+  $("btn-all-logs").classList.toggle("hidden", SELECTED == null);
+  renderLogs(records);
+}
+
+async function renderDetail(id) {
+  const box = $("detail");
+  if (id == null) { box.classList.add("hidden"); return; }
+  const payload = await api("/api/channels/" + id);
+  const ch = payload.channel || payload;
+  box.classList.remove("hidden");
+  $("detail-title").textContent = ch.name;
+  $("detail-sub").textContent = "#" + ch.id + " · " + ch.type + " · " + ch.status;
+  box.innerHTML = `
+    <div class="row" style="gap:16px;flex-wrap:wrap">
+      <span><span class="muted">启用：</span>${ch.enabled ? "是" : "否"}</span>
+      <span><span class="muted">创建：</span>${esc(ch.created_at || "")}</span>
+      <span><span class="muted">更新：</span>${esc(ch.updated_at || "")}</span>
+      <span class="grow"></span>
+      <button class="link" id="btn-rename">重命名</button>
+      <button class="link danger" id="btn-del2">删除渠道</button>
+    </div>
+    ${ch.status_detail ? `<div class="err-msg" style="margin-top:8px">${esc(ch.status_detail)}</div>` : ""}
+    <div class="sec">配置（凭据已打码）</div>
+    <pre>${esc(JSON.stringify(ch.settings || {}, null, 2))}</pre>
+    <div class="sec">护栏</div>
+    <pre>${esc(JSON.stringify(ch.options || {}, null, 2))}</pre>`;
+  $("btn-del2").onclick = () => removeChannel(ch.id);
+  $("btn-rename").onclick = () => renameChannel(ch);
+}
+
+// ── 数据加载 ────────────────────────────────────────────
+async function refresh(keepSelection = true) {
+  try {
+    const [health, stats, logs] = await Promise.all([
+      api("/health"), api("/api/stats"), api("/api/logs?limit=500"),
+    ]);
+    if (health.auth === "none") {
+      $("auth-note").classList.remove("hidden");
+      $("auth-note").textContent = "未设置管理员密码：当前无鉴权，仅限本机调试";
+    } else {
+      $("auth-note").classList.add("hidden");
+    }
+    renderStats(stats);
+    CHANNELS = (await api("/api/channels")).channels;
+    if (!keepSelection || !CHANNELS.some((c) => c.id === SELECTED)) SELECTED = null;
+    renderChannels();
+    LOGS = logs.logs;
+    renderLogTable();
+    if (SELECTED != null) await renderDetail(SELECTED);
+  } catch (err) {
+    toast(err.message || "加载失败", true);
+  }
+}
+
+// ── 操作 ────────────────────────────────────────────────
+async function toggleChannel(id, enabled) {
+  try {
+    await api("/api/channels/" + id, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    toast(enabled ? "已启用" : "已停用");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function removeChannel(id) {
+  const ch = CHANNELS.find((c) => c.id === id);
+  if (!confirm(`删除渠道「${ch ? ch.name : id}」？配置会移到 config/.trash/（可人工恢复）。`)) return;
+  try {
+    await api("/api/channels/" + id, { method: "DELETE" });
+    if (SELECTED === id) SELECTED = null;
+    toast("已删除");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function renameChannel(ch) {
+  const name = prompt("新的渠道名称：", ch.name);
+  if (!name || name === ch.name) return;
+  try {
+    await api("/api/channels/" + ch.id, { method: "PATCH", body: JSON.stringify({ name }) });
+    toast("已重命名");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+// ── 添加渠道（按 settings_schema 动态渲染表单）────────────
+function fieldFor(name, prop, required) {
+  const desc = prop.description ? `<div class="hint">${esc(prop.description)}</div>` : "";
+  const requiredMark = required ? " <b>*</b>" : "";
+  let control = "";
+  if (prop.enum) {
+    control = `<select data-f="${esc(name)}" data-kind="string">
+      ${prop.enum.map((v) => `<option value="${esc(v)}" ${prop.default === v ? "selected" : ""}>${esc(v)}</option>`).join("")}
+    </select>`;
+  } else if (prop.type === "boolean") {
+    control = `<label class="row"><span class="switch"><input type="checkbox" data-f="${esc(name)}" data-kind="bool" ${prop.default ? "checked" : ""}><span></span></span></label>`;
+  } else if (prop.type === "array") {
+    control = `<input type="text" data-f="${esc(name)}" data-kind="array" placeholder="多个值用逗号分隔">`;
+  } else if (prop.type === "integer" || prop.type === "number") {
+    control = `<input type="number" data-f="${esc(name)}" data-kind="number" value="${esc(prop.default ?? "")}">`;
+  } else if (prop.type === "object") {
+    control = `<textarea data-f="${esc(name)}" data-kind="json"></textarea>`;
+  } else {
+    const kind = prop.secret ? "password" : "text";
+    control = `<input type="${kind}" data-f="${esc(name)}" data-kind="string" value="${prop.secret ? "" : esc(prop.default ?? "")}"${prop.secret ? ' placeholder="已保存的凭据不会回显"' : ""}>`;
+  }
+  return `<label><span class="lb">${esc(prop.title || name)}${requiredMark}</span>${control}${desc}</label>`;
+}
+
+function renderSettingsForm(type) {
+  const schema = (type && type.settings_schema) || {};
+  const required = schema.required || [];
+  const props = schema.properties || {};
+  $("f-settings").innerHTML = Object.keys(props).map((name) =>
+    fieldFor(name, props[name] || {}, required.includes(name))).join("");
+}
+
+async function openAddModal() {
+  if (!TYPES.length) {
+    try { TYPES = (await api("/api/types")).types; } catch (err) { toast(err.message, true); }
+  }
+  $("f-type").innerHTML = TYPES.map((t) =>
+    `<option value="${esc(t.type)}">${esc(t.name)}（${esc(t.type)}）</option>`).join("");
+  $("f-type").onchange = () => renderSettingsForm(TYPES.find((t) => t.type === $("f-type").value));
+  $("f-name").value = "";
+  $("f-allow-all").checked = false;
+  $("f-rate").value = 30;
+  $("form-err").classList.add("hidden");
+  renderSettingsForm(TYPES[0]);
+  $("modal").classList.remove("hidden");
+}
+
+function collectSettings() {
+  const settings = {};
+  $("f-settings").querySelectorAll("[data-f]").forEach((el) => {
+    const name = el.dataset.f, kind = el.dataset.kind;
+    if (kind === "bool") { settings[name] = el.checked; return; }
+    let value = el.value;
+    if (value === "" || value == null) return;
+    if (kind === "number") value = Number(value);
+    else if (kind === "array") value = value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    else if (kind === "json") { try { value = JSON.parse(value); } catch (_) { return; } }
+    settings[name] = value;
+  });
+  return settings;
+}
+
+async function submitChannel() {
+  const errBox = $("form-err");
+  errBox.classList.add("hidden");
+  const type = $("f-type").value;
+  const name = $("f-name").value.trim();
+  if (!name) { errBox.textContent = "渠道名称不能为空"; errBox.classList.remove("hidden"); return; }
+  const options = { rate_limit_per_min: Number($("f-rate").value) || 0 };
+  if ($("f-allow-all").checked) options.allow_mention_all = true;
+  try {
+    await api("/api/channels", {
+      method: "POST",
+      body: JSON.stringify({ name, type, settings: collectSettings(), options }),
+    });
+    $("modal").classList.add("hidden");
+    toast("渠道已创建");
+    await refresh();
+  } catch (err) {
+    let message = err.message;
+    if (err.details && err.details.fields) {
+      message += "：" + err.details.fields.map((f) => f.field + " " + f.message).join("；");
+    }
+    errBox.textContent = message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+// ── 事件绑定 ────────────────────────────────────────────
+$("btn-refresh").onclick = () => { refresh(); if (!$("view-tokens").classList.contains("hidden")) loadTokens(); };
+$("btn-add").onclick = () => openAddModal();
+$("btn-tab-channels").onclick = () => switchView("channels");
+$("btn-tab-tokens").onclick = () => switchView("tokens");
+
+// ── Token 操作 ──────────────────────────────────────
+$("btn-new-token").onclick = async () => {
+  const name = prompt("给这把 token 起个名字（便于追溯是谁在用）：");
+  if (!name) return;
+  try {
+    const data = await api("/api/tokens", { method: "POST", body: JSON.stringify({ name }) });
+    showSecret(data.token);
+    await loadTokens();
+  } catch (err) { toast(err.message, true); }
+};
+
+function showSecret(token) {
+  $("secret-name").textContent = token.name;
+  $("secret-value").textContent = token.secret;
+  $("secret-modal").classList.remove("hidden");
+}
+
+$("btn-secret-close").onclick = () => $("secret-modal").classList.add("hidden");
+$("btn-secret-copy").onclick = async () => {
+  const value = $("secret-value").textContent;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("已复制到剪贴板");
+  } catch (_) {
+    toast("复制失败，请手动选中复制", true);
+  }
+};
+$("token-rows").addEventListener("change", async (event) => {
+  const toggle = event.target.closest("input[data-token-toggle]");
+  if (!toggle) return;
+  try {
+    await api("/api/tokens/" + toggle.dataset.tokenToggle, {
+      method: "PATCH", body: JSON.stringify({ enabled: toggle.checked }),
+    });
+    toast(toggle.checked ? "已启用" : "已禁用（立即生效）");
+    await loadTokens();
+  } catch (err) { toast(err.message, true); }
+});
+$("token-rows").onclick = async (event) => {
+  const rename = event.target.closest("[data-token-rename]");
+  if (rename) {
+    const name = prompt("新的名称：", rename.dataset.name);
+    if (!name || name === rename.dataset.name) return;
+    try {
+      await api("/api/tokens/" + rename.dataset.tokenRename, { method: "PATCH", body: JSON.stringify({ name }) });
+      toast("已重命名");
+      await loadTokens();
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  const del = event.target.closest("[data-token-del]");
+  if (del) {
+    if (!confirm(`删除 token「${del.dataset.name}」？用它的系统会立刻发不出消息。`)) return;
+    try {
+      await api("/api/tokens/" + del.dataset.tokenDel, { method: "DELETE" });
+      toast("已删除");
+      await loadTokens();
+    } catch (err) { toast(err.message, true); }
+  }
+};
+$("btn-cancel").onclick = () => $("modal").classList.add("hidden");
+$("btn-submit").onclick = () => submitChannel();
+$("modal").onclick = (event) => { if (event.target === $("modal")) $("modal").classList.add("hidden"); };
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") $("modal").classList.add("hidden"); });
+
+$("channel-list").onclick = (event) => {
+  // 开关用 change 事件处理：label 的合成点击会让 click 事件触发两次、顺序不确定
+  if (event.target.closest("label.switch")) return;
+  const del = event.target.closest("[data-del]");
+  if (del) { event.stopPropagation(); removeChannel(Number(del.dataset.del)); return; }
+  const item = event.target.closest(".chan");
+  if (item) {
+    const id = Number(item.dataset.id);
+    SELECTED = (SELECTED === id) ? null : id;
+    renderChannels();
+    renderLogTable();
+    renderDetail(SELECTED).catch((err) => toast(err.message || "加载渠道详情失败", true));
+  }
+};
+
+$("channel-list").addEventListener("change", (event) => {
+  const toggle = event.target.closest("input[data-toggle]");
+  if (!toggle) return;
+  toggleChannel(Number(toggle.dataset.toggle), toggle.checked);
+});
+
+$("btn-all-logs").onclick = () => {
+  SELECTED = null; renderChannels(); renderLogTable(); renderDetail(null).catch(() => {});
+};
+
+refresh();
+</script>
+</body>
+</html>
