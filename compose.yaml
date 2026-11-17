@@ -9,8 +9,9 @@ services:
     container_name: msg-hub
     restart: unless-stopped
     ports:
-      # 只绑定本机；跨容器调用请走 compose 网络（见 README「接入 pi-box」）
-      - "127.0.0.1:8788:8788"
+      # 默认只绑本机；要跨主机/跨工具调用时用 MSG_HUB_BIND 改成 0.0.0.0 或具体内网地址
+      # 跨容器调用请看 README「接入 pi-box」（走 compose 网络更安全）
+      - "${MSG_HUB_BIND:-127.0.0.1}:8788:8788"
     volumes:
       # 渠道库、渠道配置（含凭据）、发送日志
       - ./data:/data

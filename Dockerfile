@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 # 容器内不走宿主代理（pip 受影响）；国内构建用 PIP_INDEX_URL 换源

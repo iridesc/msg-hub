@@ -443,7 +443,8 @@ echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' \
 | `MSG_HUB_ADMIN_PASSWORD` | 空 | Basic 认证的密码；**HTTP 必填，不填直接拒绝启动**（stdio 模式不需要） |
 | `MSG_HUB_DATA_DIR` | `~/.msg-hub` | 数据目录（compose 里设为 `/data`） |
 | `MSG_HUB_TYPES_DIR` | 包内 `msg_hub/types` | 渠道类型插件目录；指向别处即可换掉内置类型 |
-| `MSG_HUB_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*,msg-hub:*,[::1]:*` | MCP 传输层 Host 白名单（DNS rebinding 防护），跨容器部署要加上容器名 |
+| `MSG_HUB_BIND` | `127.0.0.1` | 端口绑定地址；要跨主机调用改成 `0.0.0.0` 或具体内网 IP |
+| `MSG_HUB_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*,msg-hub:*,[::1]:*` | Host 白名单（DNS rebinding 防护），跨容器/跨主机访问要加上容器名或访问 IP，否则 421 |
 | `MSG_HUB_PLUGIN_TIMEOUT` | `20` | 插件超时（秒） |
 | `MSG_HUB_MAX_TEXT` | `20000` | 单条消息最大字符数 |
 | `MSG_HUB_DEFAULT_RATE_LIMIT` | `30` | 渠道默认每分钟上限 |
