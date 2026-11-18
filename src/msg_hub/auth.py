@@ -1,9 +1,9 @@
 """认证与授权：两套凭据，用途彻底分开。
 
     ┌─ 管理面（人 / 浏览器）──  Basic 用户名 + 密码（环境变量，强制必填）
-    │     /dashboard、渠道增删改、token 增删改禁、日志
-    ├─ 调用面（系统 / 脚本 / MCP）── API Token（state.json 的 tokens[]，可选）
-    │     只能发消息（+ 只读的类型与渠道列表）
+    │     /dashboard、渠道/入口/规则增删改、日志
+    ├─ 调用面（系统 / 脚本 / MCP）── API Token（state.json 的 entries[]，可选）
+    │     只能发消息，且**不能指定出口**——出口完全由路由规则决定
     └─ /health 免认证
 
 设计要点：
@@ -26,17 +26,19 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 ADMIN = "admin"
-TOKEN = "token"
+ENTRY = "entry"
+TOKEN = ENTRY  # 兼容旧名
 
 
 @dataclass(frozen=True)
 class Identity:
-    """当前调用者。"""
+    """当前调用者：管理员，或某个入口（Entry）。"""
 
-    role: Literal["admin", "token"] = ADMIN
-    token_id: int | None = None
-    token_name: str | None = None
-    token_prefix: str | None = field(default=None)
+    role: Literal["admin", "entry"] = ADMIN
+    entry_id: int | None = None
+    entry_name: str | None = None
+    entry_prefix: str | None = field(default=None)
+    entry_tags: tuple[str, ...] = ()
 
     @property
     def is_admin(self) -> bool:
@@ -47,16 +49,16 @@ class Identity:
         if self.is_admin:
             return {"type": ADMIN}
         return {
-            "type": TOKEN,
-            "id": self.token_id,
-            "name": self.token_name,
-            "prefix": self.token_prefix,
+            "type": ENTRY,
+            "id": self.entry_id,
+            "name": self.entry_name,
+            "prefix": self.entry_prefix,
         }
 
     def describe(self) -> str:
         if self.is_admin:
             return "管理员"
-        return f"token#{self.token_id} {self.token_name or ''} {self.token_prefix or ''}".strip()
+        return f"入口#{self.entry_id} {self.entry_name or ''} {self.entry_prefix or ''}".strip()
 
 
 ADMIN_IDENTITY = Identity(role=ADMIN)

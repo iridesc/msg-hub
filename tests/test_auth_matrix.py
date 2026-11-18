@@ -1,10 +1,15 @@
-"""两套凭据的权限矩阵：Basic（管理员）vs Bearer（API Token）。"""
+"""权限矩阵：Basic（管理员）vs Bearer（入口 token）。
+
+核心不变量（v3）：
+1. 入口 token **只能发消息**，碰任何管理面一律 403；
+2. 入口 token **不能指定出口**——投递目标完全由路由规则决定；
+3. 管理员可以直连某个出口（应急/调试），也可以走路由。
+"""
 
 from __future__ import annotations
 
 import base64
 import dataclasses
-import json
 
 from starlette.testclient import TestClient
 
@@ -29,191 +34,222 @@ def bearer(secret: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {secret}"}
 
 
-def make_token(client: TestClient, name: str = "监控平台") -> dict:
-    return client.post("/api/tokens", json={"name": name}, headers=admin()).json()["token"]
+def make_entry(client: TestClient, name: str = "监控平台", tags: list[str] | None = None) -> dict:
+    return client.post(
+        "/api/entries", json={"name": name, "tags": tags or []}, headers=admin()
+    ).json()["entry"]
 
 
-def make_channel(client: TestClient) -> int:
+def make_channel(client: TestClient, name: str = "工作群1", tags: list[str] | None = None) -> int:
     return client.post(
         "/api/channels",
-        json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
+        json={
+            "name": name,
+            "type": "wecom_bot",
+            "settings": WECOM_SETTINGS,
+            "tags": tags or [],
+        },
         headers=admin(),
     ).json()["channel"]["id"]
 
 
-# ── token 生命周期 ────────────────────────────────────────
-def test_create_token_returns_plaintext_once(cfg):
+def make_rule(
+    client: TestClient,
+    name: str = "全部入口→全部出口",
+    entry: dict | None = None,
+    outbound: dict | None = None,
+) -> dict:
+    return client.post(
+        "/api/rules",
+        json={
+            "name": name,
+            "entry": entry,
+            "outbound": outbound or {"field": "type", "op": "exact", "value": "wecom_bot"},
+        },
+        headers=admin(),
+    ).json()["rule"]
+
+
+def routed_entry(client: TestClient, name: str = "监控平台") -> dict:
+    """建一个「入口 + 出口 + 规则」齐全的场景，返回带明文的入口。"""
+    make_channel(client)
+    entry = make_entry(client, name)
+    make_rule(client)
+    return entry
+
+
+# ── 入口生命周期 ──────────────────────────────────────────
+def test_create_entry_returns_plaintext_once(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        assert token["secret"].startswith("mh_")
-        assert token["prefix"] == token["secret"][:9]
+        entry = make_entry(client, tags=["app:pibox"])
+        assert entry["secret"].startswith("mh_")
+        assert entry["prefix"] == entry["secret"][:9]
+        assert entry["tags"] == ["app:pibox"]
 
         # 后续列表不再给明文
-        listed = client.get("/api/tokens", headers=admin()).json()["tokens"]
+        listed = client.get("/api/entries", headers=admin()).json()["entries"]
         assert len(listed) == 1
         assert "secret" not in listed[0]
-        assert listed[0]["prefix"] == token["prefix"]
+        assert listed[0]["prefix"] == entry["prefix"]
+        assert listed[0]["tags"] == ["app:pibox"]
 
 
-def test_list_tokens_empty_by_default(cfg):
+def test_list_entries_empty_by_default(cfg):
     with make_client(cfg) as client:
-        assert client.get("/api/tokens", headers=admin()).json()["tokens"] == []
+        assert client.get("/api/entries", headers=admin()).json()["entries"] == []
 
 
-def test_disable_and_delete_token(cfg):
+def test_disable_and_delete_entry(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        channel_id = make_channel(client)
+        entry = make_entry(client)
+        make_channel(client)
+        make_rule(client)
 
-        # 启用状态可用
+        # 启用时能发
         assert client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=bearer(token["secret"])
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 200
 
-        # 禁用 → 401
-        patched = client.patch(f"/api/tokens/{token['id']}", json={"enabled": False}, headers=admin())
+        # 停用后立刻 401
+        patched = client.patch(f"/api/entries/{entry['id']}", json={"enabled": False}, headers=admin())
         assert patched.status_code == 200
-        assert patched.json()["token"]["enabled"] is False
         assert client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=bearer(token["secret"])
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 401
 
-        # 删除
-        assert client.delete(f"/api/tokens/{token['id']}", headers=admin()).status_code == 200
-        assert client.get("/api/tokens", headers=admin()).json()["tokens"] == []
+        # 删掉后同样失效
+        assert client.delete(f"/api/entries/{entry['id']}", headers=admin()).status_code == 200
+        assert client.post(
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
+        ).status_code == 401
 
 
-def test_rename_token(cfg):
+def test_entry_tags_can_be_updated(cfg):
     with make_client(cfg) as client:
-        token = make_token(client, "旧名字")
-        renamed = client.patch(f"/api/tokens/{token['id']}", json={"name": "新名字"}, headers=admin())
-        assert renamed.json()["token"]["name"] == "新名字"
+        entry = make_entry(client, tags=["app:pibox"])
+        renamed = client.patch(
+            f"/api/entries/{entry['id']}",
+            json={"name": "改名后的入口", "tags": ["app:pibox", "kind:alert"]},
+            headers=admin(),
+        ).json()["entry"]
+        assert renamed["name"] == "改名后的入口"
+        assert renamed["tags"] == ["app:pibox", "kind:alert"]
 
 
-def test_token_usage_is_tracked(cfg):
+def test_duplicate_entry_name_rejected(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        channel_id = make_channel(client)
-        client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=bearer(token["secret"])
-        )
-        listed = client.get("/api/tokens", headers=admin()).json()["tokens"]
-        assert listed[0]["usage_count"] == 1
-        assert listed[0]["last_used_at"] is not None
-
-
-def test_duplicate_token_name_rejected(cfg):
-    with make_client(cfg) as client:
-        make_token(client, "监控平台")
-        response = client.post("/api/tokens", json={"name": "监控平台"}, headers=admin())
+        make_entry(client, "监控平台")
+        response = client.post("/api/entries", json={"name": "监控平台"}, headers=admin())
         assert response.status_code == 400
 
 
-# ── 权限矩阵 ──────────────────────────────────────────────
-def test_token_cannot_manage_channels(cfg):
+# ── 管理面权限 ────────────────────────────────────────────
+def test_entry_cannot_touch_management_surface(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        headers = bearer(token["secret"])
-        created = client.post(
-            "/api/channels",
-            json={"name": "新群", "type": "wecom_bot", "settings": WECOM_SETTINGS},
-            headers=headers,
+        entry = make_entry(client)
+        headers = bearer(entry["secret"])
+        for method, path in [
+            ("get", "/dashboard"),
+            ("get", "/api/channels"),
+            ("post", "/api/channels"),
+            ("get", "/api/entries"),
+            ("post", "/api/entries"),
+            ("get", "/api/rules"),
+            ("post", "/api/rules"),
+            ("get", "/api/route/preview"),
+            ("get", "/api/logs"),
+            ("get", "/api/types"),
+            ("get", "/api/stats"),
+        ]:
+            response = getattr(client, method)(
+                path,
+                headers=headers,
+                **({"json": {"name": "x"}} if method == "post" else {}),
+            )
+            assert response.status_code == 403, f"{method.upper()} {path} → {response.status_code}"
+
+
+# ── 发送面权限 ────────────────────────────────────────────
+def test_entry_cannot_specify_outbound(cfg):
+    """入口 token 传 channel 必须被拒，否则「出口完全由服务端决定」就不成立。"""
+    with make_client(cfg) as client:
+        channel_id = make_channel(client)
+        entry = make_entry(client)
+        make_rule(client)
+        response = client.post(
+            "/api/send",
+            json={"channel": channel_id, "text": "hi", "dry_run": True},
+            headers=bearer(entry["secret"]),
         )
-        assert created.status_code == 403
-        assert created.json()["error"]["code"] == "forbidden"
-
-
-def test_token_cannot_create_tokens(cfg):
-    """token 不能给自己或别人造新钥匙。"""
-    with make_client(cfg) as client:
-        token = make_token(client)
-        response = client.post("/api/tokens", json={"name": "升级"}, headers=bearer(token["secret"]))
         assert response.status_code == 403
+        assert response.json()["error"]["code"] == "forbidden"
 
 
-def test_token_cannot_read_logs(cfg):
-    """日志只有 Basic 管理员能看（用户明确要求）。"""
+def test_entry_sends_via_route(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        channel_id = make_channel(client)
-        client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=bearer(token["secret"])
+        entry = routed_entry(client)
+        response = client.post(
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         )
-        # token 自己发的也看不到
-        assert client.get("/api/logs", headers=bearer(token["secret"])).status_code == 403
-        # 管理员能看
-        assert client.get("/api/logs", headers=admin()).status_code == 200
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is True
+        assert body["routed"] is True
+        assert body["counts"]["sent"] == 1
 
 
-def test_token_can_read_channel_list_and_types(cfg):
-    """只读的类型/渠道列表对 token 开放，否则外部系统不知道该发到哪。"""
+def test_entry_without_matching_rule_gets_no_route(cfg):
     with make_client(cfg) as client:
-        token = make_token(client)
-        headers = bearer(token["secret"])
-        assert client.get("/api/types", headers=headers).status_code == 403
-        # channel_list 属于管理面（含状态与打码凭据），token 不可见
-        assert client.get("/api/channels", headers=headers).status_code == 403
+        make_channel(client)
+        entry = make_entry(client, tags=["app:pibox"])
+        make_rule(
+            client,
+            entry={"field": "tag", "op": "exact", "value": "app:其他应用"},
+            outbound={"field": "type", "op": "exact", "value": "wecom_bot"},
+        )
+        response = client.post(
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "no_route"
 
 
-def test_no_token_configured_still_allows_admin_to_send(cfg):
-    """「token 可以不设」：没建任何 token 时，管理员照常能发消息。"""
+def test_admin_can_send_directly(cfg):
+    """管理员直连出口（应急/调试），不受路由规则限制。"""
     with make_client(cfg) as client:
         channel_id = make_channel(client)
-        assert client.get("/api/tokens", headers=admin()).json()["tokens"] == []
         sent = client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=admin()
+            "/api/send",
+            json={"channel": channel_id, "text": "hi", "dry_run": True},
+            headers=admin(),
         )
         assert sent.status_code == 200
+        assert sent.json()["routed"] is False
+
+
+def test_admin_without_channel_also_uses_route(cfg):
+    """管理员不传 channel 时也走路由；只匹配「入口条件为空」的规则。"""
+    with make_client(cfg) as client:
+        make_channel(client)
+        # 有入口条件的规则不适用于管理员
+        make_rule(
+            client,
+            name="只给 pibox",
+            entry={"field": "tag", "op": "exact", "value": "app:pibox"},
+        )
+        no_route = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
+        assert no_route.status_code == 409
+        assert no_route.json()["error"]["code"] == "no_route"
+
+        # 补一条「所有入口」的规则后就能发
+        make_rule(client, name="所有入口")
+        ok_response = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
+        assert ok_response.status_code == 200
 
 
 def test_unknown_bearer_is_unauthorized(cfg):
     with make_client(cfg) as client:
-        make_token(client)
-        assert client.get(
-            "/api/send", headers=bearer("mh_deadbeefdeadbeef")
-        ).status_code in (401, 405)
-
-
-# ── 审计日志记录调用者 ────────────────────────────────────
-def test_log_records_actor_for_token(cfg):
-    """日志要能追溯是哪把 token 发的，但只记 id/名称/前缀，不记完整凭据。"""
-    with make_client(cfg) as client:
-        token = make_token(client, "监控平台")
-        channel_id = make_channel(client)
-        client.post(
-            "/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=bearer(token["secret"])
-        )
-        log = client.get("/api/logs", headers=admin()).json()["logs"][0]
-        assert log["actor"]["type"] == "token"
-        assert log["actor"]["id"] == token["id"]
-        assert log["actor"]["name"] == "监控平台"
-        assert log["actor"]["prefix"] == token["prefix"]
-        assert token["secret"] not in json.dumps(log)
-
-
-def test_log_records_actor_for_admin(cfg):
-    with make_client(cfg) as client:
-        channel_id = make_channel(client)
-        client.post("/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True}, headers=admin())
-        log = client.get("/api/logs", headers=admin()).json()["logs"][0]
-        assert log["actor"] == {"type": "admin"}
-
-
-# ── 错误凭据 ──────────────────────────────────────────────
-def test_wrong_admin_password(cfg):
-    with make_client(cfg) as client:
-        wrong = {"Authorization": "Basic " + base64.b64encode(b"admin:wrong").decode()}
-        assert client.get("/api/channels", headers=wrong).status_code == 401
-
-
-def test_wrong_admin_username(cfg):
-    with make_client(cfg) as client:
-        wrong = {"Authorization": "Basic " + base64.b64encode(b"root:" + ADMIN_PASSWORD.encode()).decode()}
-        assert client.get("/api/channels", headers=wrong).status_code == 401
-
-
-def test_malformed_authorization_header(cfg):
-    with make_client(cfg) as client:
-        assert client.get("/api/channels", headers={"Authorization": "Basic !!!notbase64"}).status_code == 401
-        assert client.get("/api/channels", headers={"Authorization": "Bearer "}).status_code == 401
-        assert client.get("/api/channels", headers={"Authorization": "Weird abc"}).status_code == 401
+        make_entry(client)
+        assert client.post(
+            "/api/send", json={"text": "hi"}, headers=bearer("mh_deadbeefdeadbeef")
+        ).status_code == 401

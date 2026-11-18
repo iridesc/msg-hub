@@ -23,6 +23,29 @@ def basic(token: str) -> dict[str, str]:
     return {"Authorization": "Basic " + base64.b64encode(f"admin:{token}".encode()).decode()}
 
 
+def _setup_route(client: TestClient, password: str = "secret") -> dict:
+    """建好「出口 + 入口 + 规则」，返回带明文 token 的入口。"""
+    headers = basic(password)
+    client.post(
+        "/api/channels",
+        json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS, "tags": ["kind:test"]},
+        headers=headers,
+    )
+    entry = client.post(
+        "/api/entries", json={"name": "监控平台", "tags": ["app:pibox"]}, headers=headers
+    ).json()["entry"]
+    client.post(
+        "/api/rules",
+        json={
+            "name": "pibox → 全部出口",
+            "entry": {"field": "tag", "op": "prefix", "value": "app:"},
+            "outbound": {"field": "tag", "op": "exact", "value": "kind:test"},
+        },
+        headers=headers,
+    )
+    return entry
+
+
 def test_dashboard_requires_auth(cfg):
     with make_client(cfg, password="secret") as client:
         response = client.get("/dashboard")
@@ -38,57 +61,53 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     assert "text/html" in response.headers["content-type"]
     body = response.text
     assert "msg-hub" in body
-    assert "添加渠道" in body
+    assert "添加出口" in body
+    assert "路由规则" in body
     # 页面里不能出现密码
     assert password not in body
 
 
-def test_token_identity_cannot_open_dashboard(cfg):
-    """API Token 只能发消息，碰管理面（看板/渠道管理/日志/token）一律 403。"""
+def test_entry_identity_cannot_open_dashboard(cfg):
+    """入口 token 只能发消息，碰管理面（看板/渠道/入口/规则/日志）一律 403。"""
     with make_client(cfg, password="secret") as client:
-        created = client.post(
-            "/api/tokens", json={"name": "监控平台"}, headers=basic("secret")
-        ).json()["token"]
-        secret = created["secret"]
+        secret = _setup_route(client)["secret"]
         bearer = {"Authorization": f"Bearer {secret}"}
 
         # 管理面：全部 403
         assert client.get("/dashboard", headers=bearer).status_code == 403
         assert client.get("/api/channels", headers=bearer).status_code == 403
-        assert client.get("/api/tokens", headers=bearer).status_code == 403
+        assert client.get("/api/entries", headers=bearer).status_code == 403
+        assert client.get("/api/rules", headers=bearer).status_code == 403
+        assert client.get("/api/route/preview", headers=bearer).status_code == 403
         assert client.get("/api/logs", headers=bearer).status_code == 403
         assert client.get("/api/stats", headers=bearer).status_code == 403
 
-        # 调用面：建完渠道后能发
-        client.post(
-            "/api/channels",
-            json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
-            headers=basic("secret"),
-        )
+        # 调用面：不能指定出口，只能走路由
         sent = client.post(
-            "/api/send", json={"channel": "工作群1", "text": "hi", "dry_run": True}, headers=bearer
+            "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer
         )
         assert sent.status_code == 200, sent.text
         assert sent.json()["ok"] is True
-
-
-def test_disabled_token_is_rejected(cfg):
-    with make_client(cfg, password="secret") as client:
-        token = client.post("/api/tokens", json={"name": "临时"}, headers=basic("secret")).json()["token"]
-        bearer = {"Authorization": f"Bearer {token['secret']}"}
-        client.post(
-            "/api/channels",
-            json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
-            headers=basic("secret"),
-        )
+        assert sent.json()["routed"] is True
         assert client.post(
-            "/api/send", json={"channel": "工作群1", "text": "x", "dry_run": True}, headers=bearer
+            "/api/send",
+            json={"channel": "工作群1", "text": "hi", "dry_run": True},
+            headers=bearer,
+        ).status_code == 403
+
+
+def test_disabled_entry_is_rejected(cfg):
+    with make_client(cfg, password="secret") as client:
+        entry = _setup_route(client)
+        bearer = {"Authorization": f"Bearer {entry['secret']}"}
+        assert client.post(
+            "/api/send", json={"text": "x", "dry_run": True}, headers=bearer
         ).status_code == 200
 
         # 禁用后立刻失效
-        client.patch(f"/api/tokens/{token['id']}", json={"enabled": False}, headers=basic("secret"))
+        client.patch(f"/api/entries/{entry['id']}", json={"enabled": False}, headers=basic("secret"))
         assert client.post(
-            "/api/send", json={"channel": "工作群1", "text": "x", "dry_run": True}, headers=bearer
+            "/api/send", json={"text": "x", "dry_run": True}, headers=bearer
         ).status_code == 401
 
 

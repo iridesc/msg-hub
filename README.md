@@ -1,37 +1,58 @@
 # msg-hub
 
-多渠道路由的**消息发送 MCP 服务**：维护一份「渠道」清单（企业微信群机器人 / 邮箱），通过 MCP 工具或 REST 接口增删改查渠道，并统一发送消息。
+多入口、按规则路由的**消息发送 MCP 服务**：调用方只拿一把 token 发消息，**投递到哪些出口完全由服务端决定**。
 
-一句话概括：**给某个群/某个人发消息，只要说"发到运维告警群"**，不用记 webhook。
+一句话概括：**调用方只提供 token 和正文，不关心发到哪个群** —— 出口由「入口标签 + 路由规则」算出来。
 
 ```
-                     ┌──────────────── msg-hub ────────────────┐
-pi-box / Claude /  → │ /mcp   MCP Streamable HTTP              │
-curl / 定时任务     → │ /api   REST                             │
-                     │                                         │
-                     │ tools    工具契约（两个前端共用一份）      │
-                     │ service  寻址 / 护栏 / 限流 / 审计       │
-                     │ store    state.json（渠道 + token）      │
-                     │ plugins  types/<type>/send_msg.py（子进程）│
-                     └───────────────┬─────────────────────────┘
-                                     │ 子进程 + stdin JSON
-                     ┌───────────────┴──────────────┐
-                     │ types/wecom_bot  → 企微群机器人 webhook
-                     │ types/email      → SMTP
-                     └──────────────────────────────┘
+                      ┌──────────────── msg-hub ─────────────────┐
+pi-box / 定时任务 /  → │ /mcp   MCP Streamable HTTP               │
+curl / 脚本          → │ /api   REST                              │
+                      │                                          │
+                      │ ① 入口 Entry    token + 标签（谁在发）    │
+                      │ ② 路由 Rule     入口条件 + 出口条件       │
+                      │ ③ 出口 Channel  企微群机器人 / 邮箱 + 标签 │
+                      │                                          │
+                      │ tools    工具契约（两个前端共用一份）      │
+                      │ routing  条件匹配 / 规则累加 / 去重        │
+                      │ service  逐出口投递 / 聚合 / 限流 / 审计   │
+                      │ store    state.json（出口 + 入口 + 规则） │
+                      └───────────────┬──────────────────────────┘
+                                      │ 子进程 + stdin JSON
+                      ┌───────────────┴──────────────┐
+                      │ types/wecom_bot  → 企微群机器人 webhook
+                      │ types/email      → SMTP
+                      └──────────────────────────────┘
 ```
+
+一次发送的判定过程：
+
+```
+消息进来（只有 token + 正文）
+   → 认证得到入口 Entry（带标签）
+   → 遍历所有启用的规则，命中的规则把出口并进结果集
+   → 并集去重
+   → 逐个出口发送，聚合结果（sent / skipped / failed）
+```
+
+关键性质：**规则之间是累加关系，没有优先级**。加一条新规则不会改变已有规则的行为，
+不会出现「改了 A 导致 B 失效」这种路由陷阱。
 
 ## 特性
 
+- **入口 / 路由 / 出口三层**：调用方只持 token；出口靠标签 + 规则匹配，**群改名、换实现都不影响调用方**
+- **调用方无法指定出口**：token 传 `channel` 会被拒（403）——「发到哪」这件事只有服务端说了算
+- **一对多扇出**：一次发送可命中多个出口（并集去重），逐出口返回结果；单个出口停用/不兼容只记为 `skipped`，不会拖垮整个请求
+- **标签表达式**：`exact` / `contains` / `prefix` / `suffix`，配合 `key:value` 标签可做层级匹配（`app:` 捞出所有应用）
 - **渠道增删改查**：`channel_create` / `channel_update` / `channel_delete` / `channel_list` / `channel_get`
-- **统一发送**：`send_message` 支持纯文本 / markdown，企微支持 `@成员`、`@所有人`（需渠道授权）
+- **统一发送**：`send_message` 支持纯文本 / markdown，企微支持 `@成员`、`@所有人`（需出口授权）
 - **类型内省**：每种渠道类型带 `manifest.json` + JSON Schema，AI 建渠道前先查 schema，不会瞎填字段
 - **进程隔离的插件模型**：一个类型 = 一个目录 = 一个 `send_msg.py`，崩了也不影响主程序
-- **单一状态文件**：渠道、凭据、护栏、API Token 全在 `state.json`（`0600`）——一次原子写 = 不会出现「有渠道无配置」的烂数据，接口返回一律打码
+- **单一状态文件**：出口、凭据、护栏、入口、路由规则全在 `state.json`（`0600`）——一次原子写 = 不会出现「有渠道无配置」的烂数据，接口返回一律打码
 - **防误发**：名称模糊匹配到多个时**报错并给候选**，绝不猜；`dry_run` 先校验；`@all` 需显式开启；单渠道限流
 - **审计日志**：每条发送（含 dry_run、失败）写 `logs/YYYY-MM-DD.jsonl`，`message_logs` 可查
 - **两种部署形态**：HTTP 服务（compose，供外部系统调用）/ **stdio 子进程（零依赖，直接塞进 pi-box 等宿主）**
-- **自带 Dashboard**：HTTP 形态带一个单页看板，看渠道启用情况与最近发送记录，并能手工启停/增删渠道
+- **自带 Dashboard**：HTTP 形态带一个单页看板（出口 / 入口 / 路由 三个页签），能手工启停增删、编辑标签与规则，并带「路由预览」看某入口会发到哪些出口
 - **零外部依赖**：核心只用标准库（无 pip 包），没有数据库、没有 MQ
 - **工具契约只写一遍**：stdio 与 HTTP 两个前端共用 `msg_hub/tools.py` 里的同一份定义，不会各自漂移
 
@@ -95,17 +116,52 @@ curl -s -X POST localhost:8788/api/channels \
         "name": "运维告警群",
         "type": "wecom_bot",
         "settings": {"webhook_key": "xxxxxxxx"},
-        "options": {"allow_mention_all": true, "rate_limit_per_min": 30}
+        "options": {"allow_mention_all": true, "rate_limit_per_min": 30},
+        "tags": ["kind:alert", "team:ops"]
       }' | jq
 ```
 
-3. 发消息：
+3. 建入口（拿到 token，明文只返回一次）：
+
+```bash
+curl -s -X POST localhost:8788/api/entries \
+  -u "admin:$MSG_HUB_ADMIN_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "监控平台", "tags": ["app:monitor", "kind:alert"]}' | jq
+# → {"ok":true,"entry":{... ,"secret":"mh_2f8a1c…"}}
+```
+
+4. 建路由规则（入口标签 `app:` 开头 → 出口标签 `kind:alert`）：
+
+```bash
+curl -s -X POST localhost:8788/api/rules \
+  -u "admin:$MSG_HUB_ADMIN_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "name": "监控平台的告警 → 运维群",
+        "entry":    {"field": "tag", "op": "prefix", "value": "app:"},
+        "outbound": {"field": "tag", "op": "exact",  "value": "kind:alert"}
+      }' | jq
+```
+
+5. 用 token 发消息 —— **只传正文，不传 channel**：
 
 ```bash
 curl -s -X POST localhost:8788/api/send \
-  -u "admin:$MSG_HUB_ADMIN_PASSWORD" \
+  -H "Authorization: Bearer $MSG_HUB_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"channel": "运维告警群", "text": "**磁盘占用 92%**", "format": "markdown"}' | jq
+  -d '{"text": "**磁盘占用 92%**", "format": "markdown"}' | jq
+# → {"ok":true,"routed":true,"counts":{"total":1,"sent":1,"skipped":0,"failed":0},
+#    "results":[{"channel":{"id":1,"name":"运维告警群"},"status":"sent",...}],
+#    "matched_rules":[{"id":1,"name":"监控平台的告警 → 运维群"}]}
+```
+
+6. 不确定会发到哪？先预览（不发送）：
+
+```bash
+curl -s "localhost:8788/api/route/preview?entry=监控平台" \
+  -u "admin:$MSG_HUB_ADMIN_PASSWORD" | jq
+# 返回 outbounds（命中的出口）+ trace（每条规则的判定明细）
 ```
 
 ### 新建一个邮箱渠道
@@ -211,137 +267,234 @@ networks:
 
 ## MCP 工具
 
+**出口（出口 = 通知渠道）**
+
 | 工具 | 作用 |
 |---|---|
-| `channel_types` | 列出渠道类型 + 能力 + `settings_schema`（建渠道前先调） |
-| `channel_list` | 列出渠道（id / 名称 / 类型 / 可用状态） |
-| `channel_get` | 单个渠道详情（凭据打码） |
-| `channel_create` | 新建渠道：`name` / `type` / `settings` / `options` |
-| `channel_update` | 改名称/类型/配置/护栏 |
-| `channel_delete` | 软删除（配置移入 `config/.trash/`） |
-| `send_message` | 发送：`channel` / `text` / `format` / `title` / `mention_*` / `dry_run` |
+| `channel_types` | 列出出口类型 + 能力 + `settings_schema`（建出口前先调） |
+| `channel_list` | 列出出口（id / 名称 / 类型 / **标签** / 可用状态） |
+| `channel_get` | 单个出口详情（凭据打码） |
+| `channel_create` | 新建出口：`name` / `type` / `settings` / `options` / **`tags`** |
+| `channel_update` | 改名称/类型/配置/护栏/**标签** |
+| `channel_delete` | 软删除（配置留档，可人工恢复） |
 | `channel_test` | 测试配置：默认 dry_run；也可对**未保存**的 settings 做试探 |
+
+**入口**
+
+| 工具 | 作用 |
+|---|---|
+| `entry_list` | 列出入口（id / 名称 / 标签 / 前缀 / 用量），不含明文 |
+| `entry_create` | 新建入口并生成 token（**明文只返回一次**） |
+| `entry_update` | 改名称 / 标签 / 启停（不换 token） |
+| `entry_delete` | 删除（该 token 立即失效） |
+
+**路由**
+
+| 工具 | 作用 |
+|---|---|
+| `rule_list` | 列出规则 |
+| `rule_create` | 新建规则：`name` / `outbound` / `entry`（留空 = 所有入口） |
+| `rule_update` | 改规则；`clear_entry=true` 清空入口条件 |
+| `rule_delete` | 删除规则 |
+| `route_preview` | 给定入口，返回会投递到的出口 + 每条规则的判定 trace |
+
+**发送 / 查询**
+
+| 工具 | 作用 |
+|---|---|
+| `send_message` | 发送：`text` / `format` / `title` / `mention_*` / `dry_run`。**不要传 `channel`**，投递目标由规则决定 |
 | `message_logs` | 查发送审计日志 |
 
-`channel` 参数既可以是 id（`2`）也可以是名称（`运维告警群`）。
+条件对象（`entry` / `outbound` 参数）形状：
+
+```jsonc
+{"field": "tag", "op": "exact", "value": "kind:alert"}
+```
+
+| 侧 | `field` 可选 | `op` 可选 |
+|---|---|---|
+| 入口条件 | `entry`（入口名称/id）、`tag` | `exact` / `contains` / `prefix` / `suffix` |
+| 出口条件 | `name`（出口名称）、`type`、`tag` | 同上 |
+
+匹配大小写不敏感；对标签做匹配时，「任一标签命中」即为真。
+
+### 标签怎么用
+
+规则靠标签匹配，所以标签要有结构。推荐 `key:value`：
+
+```
+app:pibox     app:monitor      env:test    env:prod
+kind:alert    kind:daily       team:ops    team:ea
+```
+
+于是四种 op 各有明确用途：
+
+| op | 例子 | 效果 |
+|---|---|---|
+| `exact` | `app:pibox` | 精确到某个应用 |
+| `prefix` | `app:` | 所有应用（前缀匹配） |
+| `suffix` | `:prod` | 所有生产环境标签 |
+| `contains` | `alert` | 任意包含 alert 的标签 |
 
 ## REST 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/health` | 健康检查（免鉴权） |
-| GET | `/api/types` | 渠道类型与 schema |
-| GET | `/api/stats` | 聚合：渠道状态 + 最近发送情况（dashboard 用） |
-| GET | `/api/channels?include_deleted=1` | 渠道列表 |
-| POST | `/api/channels` | 新建渠道 |
-| GET | `/api/channels/{ref}` | 渠道详情 |
-| PATCH | `/api/channels/{ref}` | 修改渠道 |
-| DELETE | `/api/channels/{ref}` | 删除渠道 |
+| GET | `/api/types` | 出口类型与 schema |
+| GET | `/api/stats` | 聚合：出口状态 + 最近发送 + 拓扑（dashboard 用） |
+| GET | `/api/channels?include_deleted=1` | 出口列表 |
+| POST | `/api/channels` | 新建出口（可带 `tags`） |
+| GET | `/api/channels/{ref}` | 出口详情 |
+| PATCH | `/api/channels/{ref}` | 修改出口（含 `tags`） |
+| DELETE | `/api/channels/{ref}` | 删除出口 |
 | POST | `/api/channels/{ref}/test` | 测试（`{"dry_run": true}`；带 `settings`+`type` 可试未保存的配置） |
-| POST | `/api/send` | 发送 |
+| GET | `/api/entries` | 入口列表（不含明文） |
+| POST | `/api/entries` | 新建入口（**返回明文 token，仅一次**） |
+| GET | `/api/entries/{ref}` | 入口详情 |
+| PATCH | `/api/entries/{ref}` | 改名称 / `tags` / 启停 |
+| DELETE | `/api/entries/{ref}` | 删除入口 |
+| GET | `/api/rules` | 规则列表 |
+| POST | `/api/rules` | 新建规则 |
+| GET | `/api/rules/{ref}` | 规则详情 |
+| PATCH | `/api/rules/{ref}` | 改规则（`clear_entry=true` 清空入口条件） |
+| DELETE | `/api/rules/{ref}` | 删除规则 |
+| GET | `/api/route/preview?entry=` | 路由预览（不发送） |
+| POST | `/api/send` | 发送（`text` 必有；`channel` 仅管理员可用） |
 | GET | `/api/logs?channel=&limit=` | 审计日志（**仅管理员**） |
-| GET | `/api/tokens` | token 列表（**仅管理员**，不含明文） |
-| POST | `/api/tokens` | 生成 token（**仅管理员**，返回明文一次） |
-| PATCH | `/api/tokens/{id}` | 改名 / 启用 / 禁用（**仅管理员**） |
-| DELETE | `/api/tokens/{id}` | 删除（**仅管理员**） |
 
 ## 鉴权：两套凭据，用途分开
 
 | 通道 | 凭据 | 配置位置 | 能干什么 |
 |---|---|---|---|
-| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、渠道增删改、token 增删改禁、**看日志**、发消息 |
-| **调用面** | API Token | `state.json` 的 `tokens[]`，**可选** | **只能发消息** |
+| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由预览、发消息 |
+| **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口** |
 
-管理员密码没配就拒绝启动；API Token 是可选的第二条通道，**不建 token 时管理员照常能发消息**，不会出现「无鉴权」状态。
+管理员密码没配就拒绝启动；入口 token 是可选的第二条通道，**不建入口时管理员照常能发消息**，不会出现「无鉴权」状态。
 
 权限矩阵：
 
-| 路由 / MCP 工具 | 管理员（Basic） | API Token（Bearer） |
+| 路由 / MCP 工具 | 管理员（Basic） | 入口（Bearer） |
 |---|:--:|:--:|
 | `/health` | 免 | 免 |
-| `/dashboard`、`/api/channels*`、`/api/tokens*`、`/api/logs`、`/api/stats`、`/api/types` | ✅ | ❌ 403 |
-| `/api/send`、MCP `send_message` / `channel_list` / `channel_types` | ✅ | ✅ |
-| MCP `channel_create/update/delete/test`、`message_logs` | ✅ | ❌ 403 |
+| `/dashboard`、`/api/channels*`、`/api/entries*`、`/api/rules*`、`/api/route/*`、`/api/logs`、`/api/stats`、`/api/types` | ✅ | ❌ 403 |
+| `/api/send`、MCP `send_message` | ✅（可用 `channel` 直连） | ✅（**传 `channel` 直接 403**） |
+| MCP `channel_*`、`entry_*`、`rule_*`、`route_preview`、`message_logs` | ✅ | ❌ 403 |
 
-**token 看不到日志**——日志（含「谁发的」）只有管理员能读。
+两个刻意的设计：
+
+1. **入口 token 看不到日志** —— 日志（含「谁发的」）只有管理员能读。
+2. **入口 token 不能指定出口** —— 否则「出口完全由服务端决定」就不成立了，规则形同虚设。
+   只有管理员可以用 `channel` 直连某个出口（应急/调试）。
 
 ```bash
 # 管理员（浏览器弹框用同一对凭据）
 curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" localhost:8788/api/channels
 
-# 外部系统：先生成一把 token（明文只显示一次）
-curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" -X POST localhost:8788/api/tokens \
-  -H 'Content-Type: application/json' -d '{"name":"监控平台"}'
-# → {"ok":true,"token":{"id":1,"prefix":"mh_252170","secret":"mh_252170…"}}
+# 外部系统：建入口拿 token（明文只显示一次）
+curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" -X POST localhost:8788/api/entries \
+  -H 'Content-Type: application/json' -d '{"name":"监控平台","tags":["app:monitor"]}'
+# → {"ok":true,"entry":{"id":1,"prefix":"mh_2f8a1c","secret":"mh_2f8a1c…"}}
 
-# 用它发消息
+# 用它发消息（不传 channel）
 curl -X POST localhost:8788/api/send \
-  -H "Authorization: Bearer $MSG_HUB_API_TOKEN" \
+  -H "Authorization: Bearer $MSG_HUB_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"channel":"运维告警群","text":"磁盘 92%"}'
+  -d '{"text":"磁盘 92%"}'
 ```
 
 ## Dashboard
 
 HTTP 服务形态附带一个单页 dashboard：`http://127.0.0.1:8788/dashboard`（根路径 `/` 会跳过去）。
+三个页签对应三层模型，都支持深链（`#channels` / `#entries` / `#rules`）。
 
-<p align="center"><img src="docs/dashboard.png" alt="msg-hub dashboard" width="720"></p>
+<p align="center">
+  <img src="docs/dashboard.png" alt="msg-hub 出口与发送日志" width="720"><br>
+  <img src="docs/routing.png" alt="msg-hub 路由规则" width="720">
+</p>
 
-它能看到并操作：
+- **出口页签**：状态点（可用 / 已停用 / 损坏）、启用开关、删除、标签、按类型 schema 动态渲染的添加表单；
+  右侧是最近 500 条发送记录（时间 / 调用者 / 来源 / 出口 / 格式 / 成功·跳过·失败 / 错误码 / 内容 / 耗时）
+- **入口页签**：新建入口（明文 token 弹窗只显示一次）、改标签、重命名、启停、删除、用量统计
+- **路由页签**：规则增删改（入口条件 + 出口条件用下拉 + 输入框拼装，不用手写 JSON）、启停、
+  **路由预览**（选一个入口，实时算出会投递到哪些出口，并逐条显示规则命中情况）
+- 一条规则都没配时，页面顶部会挂橙色横幅提醒「现在任何入口都发不出消息」
 
-- **渠道启用情况**：每个渠道的状态点（可用 / 已停用 / 损坏）、启用开关、删除按钮；顶部统计总数/可用/停用/损坏
-- **发送情况**：最近 500 条发送记录（时间 / **调用者** / 来源 / 渠道 / 格式 / 成功·失败·dry_run / 错误码 / 内容 / 耗时）、成功率、按渠道分布
-- **手工操作**：启用/停用渠道、重命名、删除（软删除）、**按类型 schema 动态渲染表单添加渠道**（`secret` 字段用密码框、枚举用下拉、默认值预填）
-- **API Token 管理**（顶部「API Token」页签）：生成（明文弹窗显示一次）、启用/禁用（立即生效）、重命名、删除；能看到前缀、最后使用时间和累计次数
-
-实现上没有任何新依赖：一个 HTML 文件（内联 CSS/JS，无构建、无 CDN），所有写操作走的都是已有的 `/api/channels` 接口 —— 和 MCP、REST 完全等价。页面本身不含任何凭据，接口返回的 secret 一律是打码后的值。
+实现上没有任何新依赖：一个 HTML 文件（内联 CSS/JS，无构建、无 CDN），所有写操作走的都是已有的 `/api/*` 接口 —— 和 MCP、REST 完全等价。页面本身不含任何凭据，接口返回的 secret 一律是打码后的值。
 
 - 不想要就关掉：`MSG_HUB_DASHBOARD=0`
-- dashboard 能删渠道、改凭据、生成 token，所以整个页面只对管理员开放（API Token 打不开）
+- dashboard 能删出口、改凭据、建入口，所以整个页面只对管理员开放（入口 token 打不开）
 
 ## 数据布局
 
 ```text
 data/
-├── state.json            # 全部状态：渠道（含凭据）+ API Token，权限 0600
+├── state.json            # 全部状态：出口 + 入口 + 路由规则，权限 0600
 ├── logs/2026-11-04.jsonl # 发送审计（按天分文件）
 ├── .cache/               # 插件可用的缓存目录（如 access_token）
 ├── .lock                 # 状态写入的跨进程锁
 └── README.md             # 数据目录自述（首次运行生成）
 ```
 
-`state.json` 结构：
+`state.json` 结构（version 3）：
 
 ```jsonc
 {
-  "version": 2,
-  "next_id": 3,
-  "next_token_id": 2,
+  "version": 3,
+  "next_id": 4, "next_entry_id": 3, "next_rule_id": 4,
+
+  // 出口（= 通知渠道）
   "channels": [
     {"id": 1, "name": "运维告警群", "type": "wecom_bot", "enabled": true,
      "settings": {"webhook_key": "...", "base_url": "...", "timeout": 10},  // 凭据
      "options": {"allow_mention_all": true, "rate_limit_per_min": 30},      // 护栏
+     "tags": ["kind:alert", "team:ops"],                                    // 路由标签
      "created_at": "...", "updated_at": "..."}
   ],
-  "deleted": [ /* 完整对象，含 settings，可直接人工恢复 */ ],
-  "tokens": [
-    {"id": 1, "name": "监控平台", "secret": "mh_…", "enabled": true,
-     "created_at": "...", "last_used_at": "...", "usage_count": 12}
-  ]
+
+  // 入口（= 持 token 的调用方）
+  "entries": [
+    {"id": 1, "name": "监控平台", "secret": "mh_…", "tags": ["app:monitor"],
+     "enabled": true, "created_at": "...", "last_used_at": "...", "usage_count": 12}
+  ],
+
+  // 路由规则（入口条件可空 = 所有入口）
+  "rules": [
+    {"id": 1, "name": "监控平台的告警 → 运维群", "enabled": true,
+     "entry":    {"field": "tag", "op": "prefix", "value": "app:"},
+     "outbound": {"field": "tag", "op": "exact",  "value": "kind:alert"},
+     "created_at": "...", "updated_at": "..."}
+  ],
+
+  "deleted": [ /* 软删除的出口，含 settings，可直接人工恢复 */ ]
 }
 ```
 
-> 从 v1（`channels.json` + `config/<id>.json`）升级时自动迁移：合并进 `state.json`，
-> 旧文件留档为 `channels.json.v1.bak` 和 `config.migrated-<时间戳>/`（可删）。
-> 旧的 `MSG_HUB_TOKEN` 会自动变成一把名为「旧版 MSG_HUB_TOKEN（已迁移，可删除）」的 API Token，
-> 现有 MCP 客户端不会断。
-
-`options` 是所有类型通用的护栏：
+> `options` 是所有类型通用的护栏：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `allow_mention_all` | `false` | 允许 `@所有人` |
-| `rate_limit_per_min` | `30` | 单渠道每分钟发送上限，`0` = 不限；`dry_run` 只校验不真发，不占配额。计数在进程内存里（单进程部署语义） |
+| `rate_limit_per_min` | `30` | 单出口每分钟发送上限，`0` = 不限；`dry_run` 只校验不真发，不占配额。计数在进程内存里（单进程部署语义） |
+
+### 从 v2 升级到 v3（重要）
+
+v3 引入了「入口」和「路由规则」，**`tokens` 改名 `entries` 并新增 `tags`**，会自动迁移。
+但有一条**必须手工处理**的破坏性变化：
+
+> **v2 的一把 token 可以发任意出口；v3 的入口出口由规则决定，一把 token 的路由结果是恒定的。**
+> 所以原来「一把 token 发 N 个群」的用法，升级后必须拆成 N 个入口 + N 条规则。
+
+迁移会自动做的事：
+
+- `tokens[]` → `entries[]`，补空 `tags`
+- 出口补空 `tags`
+- 新建空的 `rules[]`（**不会自动生成规则**——否则一条消息会广播到所有出口）
+- `next_token_id` → `next_entry_id`，id 游标保持不变
+- 旧 `MSG_HUB_TOKEN` → 名为「旧版 MSG_HUB_TOKEN（已迁移，可删除）」的入口（标签 `legacy`）
+
+迁移**不会**自动做的事：配规则。升级后如果没配规则，入口发消息会得到 `no_route`，
+错误信息里会列出可用出口和规则条数，引导你去 dashboard 的「路由」页签补规则。
 
 ## 插件契约（新增渠道类型只需加目录）
 
@@ -432,6 +585,8 @@ echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' \
 | `plugin_timeout` | 504 | 是 | 插件超时 |
 | `plugin_error` | 502 | 视情况 | 插件崩溃/输出非法 |
 | `state_broken` | 500 | 否 | `state.json` 损坏 |
+| `no_route` | 409 | 否 | 该入口没有匹配到任何可用出口（附规则条数与可用出口） |
+| `all_failed` | 502 | 是 | 命中的出口全部发送失败（附每个出口的结果） |
 | `unauthorized` | 401 | 否 | 缺少或错误的凭据 |
 | `forbidden` | 403 | 否 | 当前凭据无权执行该操作（如 token 想管理渠道/看日志） |
 
@@ -468,12 +623,13 @@ echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' \
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev,http]"
-pytest -q                       # 65 个测试，无需联网
+pytest -q                       # 120 个测试，无需联网
 python -m msg_hub               # HTTP 服务（默认 0.0.0.0:8788）
 python src/msg_hub/stdio.py     # stdio MCP（零依赖，直接可跑）
 ```
 
 新增一个 MCP 工具时，只改 `src/msg_hub/tools.py` 一处：stdio 与 HTTP 两个前端会自动同步。
+路由逻辑集中在 `src/msg_hub/routing.py`，条件只有 `field × op` 两个维度，扩字段比扩 op 更划算。
 
 ## License
 

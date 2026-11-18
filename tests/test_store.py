@@ -108,33 +108,33 @@ def test_corrupt_state_raises(cfg):
 # ── Token ─────────────────────────────────────────────────
 def test_token_lifecycle(cfg):
     store = Store(cfg)
-    token = store.create_token("监控平台")
+    token = store.insert_entry("监控平台")
     assert token.id == 1
     assert token.secret.startswith("mh_")
     assert len(token.secret) == len("mh_") + 32
     assert token.prefix == token.secret[:9]
 
-    assert store.tokens()[0].name == "监控平台"
-    assert store.find_token_by_secret(token.secret) is not None
+    assert store.entries()[0].name == "监控平台"
+    assert store.find_entry_by_secret(token.secret) is not None
 
-    store.replace_token(type(token)(**{**token.to_dict(), "enabled": False}))
-    assert store.find_token_by_secret(token.secret) is None  # 禁用即失效
+    store.replace_entry(type(token)(**{**token.to_dict(), "enabled": False}))
+    assert store.find_entry_by_secret(token.secret) is None  # 禁用即失效
 
-    store.delete_token(token.id)
-    assert store.tokens() == []
+    store.delete_entry(token.id)
+    assert store.entries() == []
 
 
 def test_token_plaintext_is_stored(cfg):
     """明文存储（用户明确选择）：文件里能看到 secret 原值。"""
     store = Store(cfg)
-    token = store.create_token("监控平台")
+    token = store.insert_entry("监控平台")
     raw = json.loads(cfg.state_path.read_text())
-    assert raw["tokens"][0]["secret"] == token.secret
+    assert raw["entries"][0]["secret"] == token.secret
 
 
 def test_token_public_view_hides_secret(cfg):
     store = Store(cfg)
-    token = store.create_token("监控平台")
+    token = store.insert_entry("监控平台")
     public = token.to_public()
     assert "secret" not in public
     assert public["prefix"] == token.prefix
@@ -143,32 +143,32 @@ def test_token_public_view_hides_secret(cfg):
 
 def test_token_names_are_unique(cfg):
     store = Store(cfg)
-    store.create_token("监控平台")
+    store.insert_entry("监控平台")
     with pytest.raises(HubError):
-        store.create_token("监控平台")
+        store.insert_entry("监控平台")
 
 
-def test_touch_token_tracks_usage(cfg):
+def test_touch_entry_tracks_usage(cfg):
     store = Store(cfg)
-    token = store.create_token("监控平台")
-    store.touch_token(token.id)
-    store.touch_token(token.id)
-    updated = store.get_token(token.id)
+    token = store.insert_entry("监控平台")
+    store.touch_entry(token.id)
+    store.touch_entry(token.id)
+    updated = store.get_entry(token.id)
     assert updated.usage_count == 2
     assert updated.last_used_at is not None
 
 
 def test_disabled_token_not_found_by_secret(cfg):
     store = Store(cfg)
-    token = store.create_token("停用的", enabled=False)
-    assert store.find_token_by_secret(token.secret) is None
+    token = store.insert_entry("停用的", enabled=False)
+    assert store.find_entry_by_secret(token.secret) is None
 
 
-def test_find_token_by_secret_ignores_unknown(cfg):
+def test_find_entry_by_secret_ignores_unknown(cfg):
     store = Store(cfg)
-    store.create_token("监控平台")
-    assert store.find_token_by_secret("mh_deadbeef") is None
-    assert store.find_token_by_secret("") is None
+    store.insert_entry("监控平台")
+    assert store.find_entry_by_secret("mh_deadbeef") is None
+    assert store.find_entry_by_secret("") is None
 
 
 # ── v1 → v2 迁移 ──────────────────────────────────────────
@@ -228,20 +228,20 @@ def test_migration_is_idempotent(cfg):
     assert first == second
 
 
-def test_legacy_token_is_imported_once(cfg):
+def test_legacy_entry_is_imported_once(cfg):
     """旧的 MSG_HUB_TOKEN 自动变成一把 token，现有 MCP 客户端不会断。"""
     import dataclasses
 
     settings = dataclasses.replace(cfg, legacy_token="mh_legacy_token_value")
     store = Store(settings)
-    tokens = store.tokens()
+    tokens = store.entries()
     assert len(tokens) == 1
     assert tokens[0].secret == "mh_legacy_token_value"
-    assert store.find_token_by_secret("mh_legacy_token_value") is not None
+    assert store.find_entry_by_secret("mh_legacy_token_value") is not None
 
     # 再启动一次不重复导入
     Store(settings)
-    assert len(Store(settings).tokens()) == 1
+    assert len(Store(settings).entries()) == 1
 
 
 # ── 并发 ──────────────────────────────────────────────────
@@ -287,3 +287,78 @@ def test_concurrent_processes_do_not_lose_channels(cfg):
     names = {channel["name"] for channel in state["channels"]}
     assert len(names) == 30
     assert {channel["id"] for channel in state["channels"]} == set(range(1, 31))
+
+
+# ── v2 → v3 迁移 ──────────────────────────────────────────
+def test_v2_state_is_upgraded_to_v3(cfg):
+    """v2 的 tokens 要变成 entries，并获得空标签；渠道补 tags；新增 rules。"""
+    legacy = {
+        "version": 2,
+        "next_id": 3,
+        "next_token_id": 5,
+        "channels": [
+            {
+                "id": 1,
+                "name": "工作群1",
+                "type": "wecom_bot",
+                "enabled": True,
+                "settings": {"webhook_key": "k" * 36},
+                "options": {},
+                "created_at": "2026-01-01T00:00:00+08:00",
+                "updated_at": "2026-01-01T00:00:00+08:00",
+            }
+        ],
+        "deleted": [],
+        "tokens": [
+            {
+                "id": 4,
+                "name": "旧 token",
+                "secret": "mh_0123456789abcdef0123456789abcdef",
+                "enabled": True,
+                "created_at": "2026-01-01T00:00:00+08:00",
+                "last_used_at": None,
+                "usage_count": 7,
+            }
+        ],
+    }
+    cfg.state_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    store = Store(cfg)
+    state = json.loads(cfg.state_path.read_text(encoding="utf-8"))
+
+    assert state["version"] == 3
+    assert "tokens" not in state
+    assert state["entries"][0]["name"] == "旧 token"
+    assert state["entries"][0]["tags"] == []
+    assert state["entries"][0]["usage_count"] == 7
+    # id 游标要接着老值走，不能重号
+    assert state["next_entry_id"] == 5
+    assert state["rules"] == []
+    assert state["channels"][0]["tags"] == []
+
+    # 迁移后旧 token 仍然能认证
+    assert store.find_entry_by_secret("mh_0123456789abcdef0123456789abcdef") is not None
+
+
+def test_v2_migration_does_not_create_rules(cfg):
+    """迁移不会自动生成规则——否则一条消息会广播到所有渠道。"""
+    legacy = {
+        "version": 2,
+        "next_id": 2,
+        "next_token_id": 2,
+        "channels": [
+            {
+                "id": 1,
+                "name": "群",
+                "type": "wecom_bot",
+                "settings": {"webhook_key": "k" * 36},
+            }
+        ],
+        "tokens": [{"id": 1, "name": "t", "secret": "mh_" + "a" * 32}],
+    }
+    cfg.state_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.state_path.write_text(json.dumps(legacy), encoding="utf-8")
+    Store(cfg)
+    state = json.loads(cfg.state_path.read_text(encoding="utf-8"))
+    assert state["rules"] == []

@@ -29,6 +29,8 @@ STATUS_BY_CODE = {
     "plugin_timeout": 504,
     "unauthorized": 401,
     "state_broken": 500,
+    "no_route": 409,
+    "all_failed": 502,
 }
 
 
@@ -56,6 +58,8 @@ async def _json_body(request: Request) -> dict[str, Any]:
 def build_routes(hub: Hub, settings: Settings) -> list[Route]:
     async def health(_request: Request) -> Response:
         channels = hub.list_channels()
+        entries = hub.list_entries()
+        rules = hub.list_rules()
         return ok(
             {
                 "status": "ok",
@@ -68,6 +72,8 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
                     "broken": sum(1 for c in channels if c["status"] == "broken"),
                     "disabled": sum(1 for c in channels if c["status"] == "disabled"),
                 },
+                "entries": {"total": len(entries), "enabled": sum(1 for e in entries if e["enabled"])},
+                "rules": {"total": len(rules), "enabled": sum(1 for r in rules if r["enabled"])},
             }
         )
 
@@ -76,8 +82,18 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
 
     async def stats(_request: Request) -> Response:
         """dashboard 用的聚合：渠道状态 + 最近发送情况。"""
-        return ok({"channels": summarize_channels(hub), "sends": summarize_sends(hub)})
+        return ok(
+            {
+                "channels": summarize_channels(hub),
+                "sends": summarize_sends(hub),
+                "topology": {
+                    "entries": hub.list_entries(),
+                    "rules": hub.list_rules(),
+                },
+            }
+        )
 
+    # ── 渠道（出口）──────────────────────────────────────
     async def list_channels(request: Request) -> Response:
         include_deleted = request.query_params.get("include_deleted") in ("1", "true", "yes")
         return ok({"channels": hub.list_channels(include_deleted=include_deleted)})
@@ -91,6 +107,7 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
                 settings=body.get("settings") or {},
                 options=body.get("options"),
                 enabled=bool(body.get("enabled", True)),
+                tags=body.get("tags"),
             )
         except HubError as exc:
             return fail(exc)
@@ -112,6 +129,7 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
                 settings=body.get("settings"),
                 options=body.get("options"),
                 enabled=body.get("enabled"),
+                tags=body.get("tags"),
             )
         except HubError as exc:
             return fail(exc)
@@ -139,14 +157,106 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
             return fail(exc)
         return ok(result)
 
+    # ── 入口 ────────────────────────────────────────────
+    async def list_entries(_request: Request) -> Response:
+        return ok({"entries": hub.list_entries()})
+
+    async def create_entry(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            entry = hub.create_entry(
+                str(body.get("name") or ""),
+                tags=body.get("tags"),
+                enabled=bool(body.get("enabled", True)),
+            )
+        except HubError as exc:
+            return fail(exc)
+        # 明文只在这一次响应里出现
+        return ok({"ok": True, "entry": entry}, status=201)
+
+    async def get_entry(request: Request) -> Response:
+        try:
+            return ok({"entry": hub.get_entry(request.path_params["ref"])})
+        except HubError as exc:
+            return fail(exc)
+
+    async def update_entry(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            entry = hub.update_entry(
+                request.path_params["ref"],
+                name=body.get("name"),
+                tags=body.get("tags"),
+                enabled=body.get("enabled"),
+            )
+        except HubError as exc:
+            return fail(exc)
+        return ok({"ok": True, "entry": entry})
+
+    async def delete_entry(request: Request) -> Response:
+        try:
+            return ok(hub.delete_entry(request.path_params["ref"]))
+        except HubError as exc:
+            return fail(exc)
+
+    # ── 路由规则 ────────────────────────────────────────
+    async def list_rules(_request: Request) -> Response:
+        return ok({"rules": hub.list_rules()})
+
+    async def create_rule(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            rule = hub.create_rule(
+                str(body.get("name") or ""),
+                body.get("outbound") or {},
+                entry=body.get("entry"),
+                enabled=bool(body.get("enabled", True)),
+            )
+        except HubError as exc:
+            return fail(exc)
+        return ok({"ok": True, "rule": rule}, status=201)
+
+    async def get_rule(request: Request) -> Response:
+        try:
+            return ok({"rule": hub.get_rule(request.path_params["ref"])})
+        except HubError as exc:
+            return fail(exc)
+
+    async def update_rule(request: Request) -> Response:
+        body = await _json_body(request)
+        try:
+            rule = hub.update_rule(
+                request.path_params["ref"],
+                name=body.get("name"),
+                outbound=body.get("outbound"),
+                entry=body.get("entry"),
+                clear_entry=bool(body.get("clear_entry", False)),
+                enabled=body.get("enabled"),
+            )
+        except HubError as exc:
+            return fail(exc)
+        return ok({"ok": True, "rule": rule})
+
+    async def delete_rule(request: Request) -> Response:
+        try:
+            return ok(hub.delete_rule(request.path_params["ref"]))
+        except HubError as exc:
+            return fail(exc)
+
+    async def route_preview(request: Request) -> Response:
+        entry = request.query_params.get("entry")
+        try:
+            return ok(hub.route_preview(entry))
+        except HubError as exc:
+            return fail(exc)
+
+    # ── 发送 ────────────────────────────────────────────
     async def send(request: Request) -> Response:
         body = await _json_body(request)
-        if "channel" not in body:
-            return fail(HubError("invalid_argument", "缺少 channel（渠道 id 或名称）"))
         try:
             result = hub.send(
-                body["channel"],
                 body.get("text"),
+                channel=body.get("channel"),
                 format=str(body.get("format") or "plain"),
                 title=body.get("title"),
                 mention_users=body.get("mention_users"),
@@ -170,44 +280,6 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
             return fail(HubError("invalid_argument", "limit 必须是整数"))
         return ok({"logs": records})
 
-    # ── API Token（只允许管理员）────────────────────────
-    async def list_tokens(_request: Request) -> Response:
-        return ok({"tokens": hub.list_tokens()})
-
-    async def create_token(request: Request) -> Response:
-        body = await _json_body(request)
-        try:
-            token = hub.create_token(
-                str(body.get("name") or ""),
-                enabled=bool(body.get("enabled", True)),
-            )
-        except HubError as exc:
-            return fail(exc)
-        # 明文只在这一个响应里出现，之后只能看到前缀
-        return ok({"ok": True, "token": token}, status=201)
-
-    async def update_token(request: Request) -> Response:
-        body = await _json_body(request)
-        try:
-            token = hub.update_token(
-                int(request.path_params["token_id"]),
-                name=body.get("name"),
-                enabled=body.get("enabled"),
-            )
-        except HubError as exc:
-            return fail(exc)
-        except ValueError:
-            return fail(HubError("invalid_argument", "token_id 必须是整数"))
-        return ok({"ok": True, "token": token})
-
-    async def delete_token(request: Request) -> Response:
-        try:
-            return ok(hub.delete_token(int(request.path_params["token_id"])))
-        except HubError as exc:
-            return fail(exc)
-        except ValueError:
-            return fail(HubError("invalid_argument", "token_id 必须是整数"))
-
     return [
         Route("/health", health, methods=["GET"]),
         Route("/api/types", list_types, methods=["GET"]),
@@ -218,10 +290,17 @@ def build_routes(hub: Hub, settings: Settings) -> list[Route]:
         Route("/api/channels/{ref}", update_channel, methods=["PATCH"]),
         Route("/api/channels/{ref}", delete_channel, methods=["DELETE"]),
         Route("/api/channels/{ref}/test", test_channel, methods=["POST"]),
+        Route("/api/entries", list_entries, methods=["GET"]),
+        Route("/api/entries", create_entry, methods=["POST"]),
+        Route("/api/entries/{ref}", get_entry, methods=["GET"]),
+        Route("/api/entries/{ref}", update_entry, methods=["PATCH"]),
+        Route("/api/entries/{ref}", delete_entry, methods=["DELETE"]),
+        Route("/api/rules", list_rules, methods=["GET"]),
+        Route("/api/rules", create_rule, methods=["POST"]),
+        Route("/api/rules/{ref}", get_rule, methods=["GET"]),
+        Route("/api/rules/{ref}", update_rule, methods=["PATCH"]),
+        Route("/api/rules/{ref}", delete_rule, methods=["DELETE"]),
+        Route("/api/route/preview", route_preview, methods=["GET"]),
         Route("/api/send", send, methods=["POST"]),
         Route("/api/logs", logs, methods=["GET"]),
-        Route("/api/tokens", list_tokens, methods=["GET"]),
-        Route("/api/tokens", create_token, methods=["POST"]),
-        Route("/api/tokens/{token_id}", update_token, methods=["PATCH"]),
-        Route("/api/tokens/{token_id}", delete_token, methods=["DELETE"]),
     ]

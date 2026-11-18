@@ -31,7 +31,9 @@ PUBLIC_PATHS = {"/health"}
 ADMIN_ONLY_PREFIXES = (
     "/dashboard",
     "/api/channels",
-    "/api/tokens",
+    "/api/entries",
+    "/api/rules",
+    "/api/route",
     "/api/logs",
     "/api/types",
     "/api/stats",
@@ -74,8 +76,8 @@ class AuthMiddleware:
 
     - ``Authorization: Basic <base64(user:pass)>`` → 管理员身份（用户名/密码来自环境变量）
       浏览器靠它弹原生认证框，凭据会被缓存并自动带上后续请求。
-    - ``Authorization: Bearer <token>`` → API Token 身份（state.json 里的 tokens[]），
-      只能调发消息类接口，碰管理类路由直接 403。
+    - ``Authorization: Bearer <token>`` → 入口身份（state.json 里的 entries[]），
+      只能发消息，碰管理类路由直接 403；发消息时也不能指定出口。
 
     解析出身份后放进 contextvar，业务层（审计 / MCP 工具）随时能取。
     """
@@ -94,14 +96,15 @@ class AuthMiddleware:
             return None
         secret = parse_bearer(header)
         if secret:
-            token = self.hub.store.find_token_by_secret(secret)
-            if token is not None:
-                self.hub.store.touch_token(token.id)
+            entry = self.hub.store.find_entry_by_secret(secret)
+            if entry is not None:
+                self.hub.store.touch_entry(entry.id)
                 return Identity(
-                    role="token",
-                    token_id=token.id,
-                    token_name=token.name,
-                    token_prefix=token.prefix,
+                    role="entry",
+                    entry_id=entry.id,
+                    entry_name=entry.name,
+                    entry_prefix=entry.prefix,
+                    entry_tags=tuple(entry.tags),
                 )
         return None
 

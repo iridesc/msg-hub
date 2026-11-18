@@ -107,12 +107,21 @@ def test_handshake_and_tool_list(tmp_path):
             "channel_create",
             "channel_update",
             "channel_delete",
+            "entry_list",
+            "entry_create",
+            "entry_update",
+            "entry_delete",
+            "rule_list",
+            "rule_create",
+            "rule_update",
+            "rule_delete",
+            "route_preview",
             "send_message",
             "channel_test",
             "message_logs",
         }
         send_tool = next(t for t in listed["result"]["tools"] if t["name"] == "send_message")
-        assert send_tool["inputSchema"]["required"] == ["channel", "text"]
+        assert send_tool["inputSchema"]["required"] == ["text"]
     finally:
         client.close()
 

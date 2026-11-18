@@ -70,6 +70,9 @@ jobs:
               "msg_hub/types/email/manifest.json",
               "msg_hub/types/email/send_msg.py",
               "msg_hub/web/index.html",
+              "msg_hub/routing.py",
+              "msg_hub/tools.py",
+              "msg_hub/__main__.py",
           ]
           missing = [path for path in required if path not in names]
           if missing:
