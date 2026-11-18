@@ -70,6 +70,9 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     assert "btn-tab-" not in body
     # 日志表要能看出「为什么发到这个出口」
     assert "<th>匹配规则</th>" in body
+    # 路由测试：选入口 + 显式「测试」按钮（不在选择时自动计算）
+    assert 'id="btn-preview"' in body and "路由测试" in body
+    assert 'id="p-run"' in body and ">测试<" in body
     # 点行弹窗修改：三个编辑弹窗都在
     for modal in ("entry-modal", "rule-modal", "channel-modal"):
         assert f'id="{modal}"' in body, modal

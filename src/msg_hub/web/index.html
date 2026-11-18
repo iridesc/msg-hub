@@ -169,7 +169,7 @@
       <h2>路由</h2>
       <span class="muted" id="cnt-rules"></span>
       <span class="grow"></span>
-      <button class="link" id="btn-preview">预览</button>
+      <button class="link" id="btn-preview">路由测试</button>
       <button class="add" id="add-rule" title="新建规则">＋</button>
     </div>
     <ul class="list" id="list-rules"></ul>
@@ -335,14 +335,22 @@
 
 <!-- ── 路由预览 ───────────────────────────────────── -->
 <div id="preview-modal" class="modal hidden">
-  <div class="card" style="width:760px">
-    <h3>路由预览（不发送）</h3>
+  <div class="card" style="width:820px">
+    <h3>路由测试</h3>
     <div class="content">
-      <label><span class="lb">选择入口</span><select id="p-entry"></select></label>
-      <div id="p-result"></div>
+      <label><span class="lb">选择一个入口</span>
+        <div class="row">
+          <select id="p-entry" class="grow"></select>
+          <button id="p-run" class="primary" style="flex:none">测试</button>
+        </div>
+      </label>
+      <div class="hint" style="margin:-6px 0 0">只做计算，不会真的发送消息</div>
+      <div id="p-result" style="margin-top:14px">
+        <div class="muted">选一个入口，点「测试」看会投递到哪些出口。</div>
+      </div>
     </div>
     <div class="foot">
-      <button id="p-close" class="primary">关闭</button>
+      <button id="p-close">关闭</button>
     </div>
   </div>
 </div>
@@ -852,45 +860,78 @@ async function removeChannel(channel) {
   } catch (err) { toast(err.message, true); }
 }
 
-// ── 路由预览 ────────────────────────────────────────────
-async function openPreview() {
+// ── 路由测试 ────────────────────────────────────────────
+function openPreview() {
   $("p-entry").innerHTML = `<option value="">（管理员视角：只有入口条件为空的规则会命中）</option>`
     + ENTRIES.map((e) => `<option value="${e.id}">#${e.id} ${esc(e.name)}</option>`).join("");
-  $("p-result").innerHTML = `<div class="muted">选择入口后自动计算</div>`;
+  $("p-result").innerHTML = `<div class="muted">选一个入口，点「测试」看会投递到哪些出口。</div>`;
   show("preview-modal");
-  await runPreview();
 }
 
 async function runPreview() {
   const entry = $("p-entry").value;
   const box = $("p-result");
+  const button = $("p-run");
+  button.disabled = true;
+  box.innerHTML = `<div class="muted">测试中…</div>`;
   try {
     const data = await api("/api/route/preview" + (entry ? "?entry=" + encodeURIComponent(entry) : ""));
     const outs = data.outbounds || [];
     const trace = data.trace || [];
-    const outHtml = outs.length
-      ? `<table><thead><tr><th>#</th><th>出口</th><th>类型</th><th>标签</th><th>状态</th></tr></thead><tbody>`
-        + outs.map((c) => `<tr><td class="muted">${c.id}</td><td>${esc(c.name)}</td>
-            <td class="muted">${esc(c.type)}</td><td>${tagList(c.tags)}</td>
-            <td>${c.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill warn">停用会被跳过</span>'}</td></tr>`).join("")
-        + `</tbody></table>`
-      : `<div class="err-msg">没有命中任何出口 —— 这条入口发消息会返回 no_route</div>`;
-    const traceHtml = trace.length
-      ? `<div class="sec">每条规则的判定</div>
-         <table><thead><tr><th>#</th><th>规则</th><th>入口条件</th><th>出口条件</th><th>结果</th></tr></thead><tbody>`
-        + trace.map((t) => `<tr>
+    const applied = trace.filter((t) => t.applied);
+
+    // 1. 命中的规则
+    const rulesHtml = applied.length
+      ? `<table><thead><tr><th>#</th><th>规则</th><th>入口条件</th><th>出口条件</th></tr></thead><tbody>`
+        + applied.map((t) => `<tr>
             <td class="muted">${t.id}</td>
-            <td>${esc(t.name)}${t.enabled ? "" : ' <span class="pill err">停用</span>'}</td>
+            <td>${esc(t.name)}</td>
             <td class="cond">${esc(t.entry_condition)}</td>
             <td class="cond">${esc(t.outbound_condition)}</td>
-            <td>${t.applied ? '<span class="pill ok">命中</span>'
-              : (t.entry_matched ? '<span class="pill warn">入口命中但无出口</span>' : '<span class="muted">入口不匹配</span>')}</td>
           </tr>`).join("")
         + `</tbody></table>`
-      : `<div class="muted">还没有任何规则</div>`;
-    box.innerHTML = `<div class="sec">将投递到 ${outs.length} 个出口</div>${outHtml}${traceHtml}`;
+      : `<div class="err-msg">没有命中任何规则 —— 这个入口发消息会返回 no_route</div>`;
+
+    // 2. 最终出口
+    const outHtml = outs.length
+      ? `<table><thead><tr><th>#</th><th>出口</th><th>类型</th><th>标签</th><th>状态</th></tr></thead><tbody>`
+        + outs.map((c) => `<tr>
+            <td class="muted">${c.id}</td>
+            <td>${esc(c.name)}</td>
+            <td class="muted">${esc(c.type)}</td>
+            <td>${tagList(c.tags)}</td>
+            <td>${c.enabled ? '<span class="pill ok">启用</span>'
+              : '<span class="pill warn">已停用，实际发送会被跳过</span>'}</td>
+          </tr>`).join("")
+        + `</tbody></table>`
+      : `<div class="err-msg">最终没有可用出口 —— 这条入口发消息会返回 no_route</div>`;
+
+    // 3. 未命中的规则收进折叠区（默认不打扰，排查时才展开）
+    const skipped = trace.filter((t) => !t.applied);
+    const skippedHtml = skipped.length
+      ? `<details style="margin-top:12px">
+           <summary class="muted" style="cursor:pointer">未命中的规则（${skipped.length} 条）</summary>
+           <table style="margin-top:8px"><thead><tr><th>#</th><th>规则</th><th>入口条件</th><th>出口条件</th><th>原因</th></tr></thead><tbody>`
+        + skipped.map((t) => `<tr>
+            <td class="muted">${t.id}</td>
+            <td>${esc(t.name)}</td>
+            <td class="cond">${esc(t.entry_condition)}</td>
+            <td class="cond">${esc(t.outbound_condition)}</td>
+            <td>${!t.enabled ? '<span class="pill err">规则已停用</span>'
+              : (!t.entry_matched ? '<span class="muted">入口条件不匹配</span>'
+              : '<span class="pill warn">入口命中但没选中出口</span>')}</td>
+          </tr>`).join("")
+        + `</tbody></table></details>`
+      : "";
+
+    box.innerHTML = `
+      <div class="sec">命中的规则（${applied.length} 条）</div>${rulesHtml}
+      <div class="sec">最终出口（${outs.length} 个，按命中顺序去重）</div>${outHtml}
+      ${skippedHtml}`;
   } catch (err) {
     box.innerHTML = `<div class="err-msg">${esc(err.message)}</div>`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -907,7 +948,7 @@ $("add-entry").onclick = () => openEntryModal(null);
 $("add-rule").onclick = () => openRuleModal(null);
 $("add-channel").onclick = () => openChannelModal(null);
 $("btn-preview").onclick = () => openPreview();
-$("p-entry").onchange = () => runPreview();
+$("p-run").onclick = () => runPreview();
 $("p-close").onclick = () => hide("preview-modal");
 $("r-entry-field").onchange = () => syncCondEnabled();
 

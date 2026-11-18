@@ -53,7 +53,7 @@ curl / 脚本          → │ /api   REST                              │
 - **审计日志**：每条发送（含 dry_run、失败）写 `logs/YYYY-MM-DD.jsonl`，带上**命中的规则**与 `request_id`，
   能直接回答「这条消息为什么发到了这个出口」
 - **两种部署形态**：HTTP 服务（compose，供外部系统调用）/ **stdio 子进程（零依赖，直接塞进 pi-box 等宿主）**
-- **自带 Dashboard**：HTTP 形态带一个单页看板（入口 / 路由 / 出口 三栏并列，点行弹窗改），能手工启停增删、编辑标签与规则，并带「路由预览」看某入口会发到哪些出口
+- **自带 Dashboard**：HTTP 形态带一个单页看板（入口 / 路由 / 出口 三栏并列，点行弹窗改），能手工启停增删、编辑标签与规则，并带「路由测试」看某入口会投递到哪些出口
 - **零外部依赖**：核心只用标准库（无 pip 包），没有数据库、没有 MQ
 - **工具契约只写一遍**：stdio 与 HTTP 两个前端共用 `msg_hub/tools.py` 里的同一份定义，不会各自漂移
 
@@ -157,13 +157,17 @@ curl -s -X POST localhost:8788/api/send \
 #    "matched_rules":[{"id":1,"name":"监控平台的告警 → 运维群"}]}
 ```
 
-6. 不确定会发到哪？先预览（不发送）：
+6. 不确定会发到哪？先做一次路由测试（不发送）：
 
 ```bash
 curl -s "localhost:8788/api/route/preview?entry=监控平台" \
   -u "admin:$MSG_HUB_ADMIN_PASSWORD" | jq
-# 返回 outbounds（命中的出口）+ trace（每条规则的判定明细）
+# outbounds：命中的出口（去重后）
+# trace：每条规则的判定明细（entry_matched / outbounds / applied）
 ```
+
+dashboard 的「路由测试」就是这个接口的可视化：选入口 → 点测试 → 先看命中的规则，
+再看最终出口。
 
 ### 新建一个邮箱渠道
 
@@ -360,7 +364,7 @@ kind:alert    kind:daily       team:ops    team:ea
 | GET | `/api/rules/{ref}` | 规则详情 |
 | PATCH | `/api/rules/{ref}` | 改规则（`clear_entry=true` 清空入口条件） |
 | DELETE | `/api/rules/{ref}` | 删除规则 |
-| GET | `/api/route/preview?entry=` | 路由预览（不发送） |
+| GET | `/api/route/preview?entry=` | 路由测试（算出会投递到哪些出口，不发送） |
 | POST | `/api/send` | 发送（`text` 必有；`channel` 仅管理员可用） |
 | GET | `/api/logs?channel=&limit=` | 审计日志（**仅管理员**） |
 
@@ -368,7 +372,7 @@ kind:alert    kind:daily       team:ops    team:ea
 
 | 通道 | 凭据 | 配置位置 | 能干什么 |
 |---|---|---|---|
-| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由预览、发消息 |
+| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由测试、发消息 |
 | **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口**；明文可随时查（仅管理员） |
 
 管理员密码没配就拒绝启动；入口 token 是可选的第二条通道，**不建入口时管理员照常能发消息**，不会出现「无鉴权」状态。
@@ -409,14 +413,15 @@ curl -X POST localhost:8788/api/send \
 HTTP 服务形态附带一个单页 dashboard：`http://127.0.0.1:8788/dashboard`（根路径 `/` 会跳过去）。
 <p align="center">
   <img src="docs/dashboard.png" alt="msg-hub 三栏总览：入口 / 路由 / 出口 + 发送日志" width="760"><br>
-  <img src="docs/dialog.png" alt="点列表中的行弹出修改" width="760">
+  <img src="docs/dialog.png" alt="点列表中的行弹出修改" width="760"><br>
+  <img src="docs/route-test.png" alt="路由测试：选中入口后先看命中的规则，再看最终出口" width="760">
 </p>
 
 布局是**三栏并列**，对应三层模型，底下是发送日志：
 
 ```
 ┌──────────────┬──────────────┬──────────────┐
-│ 入口    [＋] │ 路由 预览 [＋]│ 出口    [＋] │
+│ 入口    [＋] │ 路由 测试 [＋]│ 出口    [＋] │
 │ ──────────── │ ──────────── │ ──────────── │
 │ ● 示例应用   │ ● 应用告警→… │ ● 示例群A    │
 │ ● 示例定时任务│ ● 定时日报→… │ ● 示例群B    │
@@ -433,7 +438,7 @@ HTTP 服务形态附带一个单页 dashboard：`http://127.0.0.1:8788/dashboard
 
 细节：
 
-- **路由**栏多一个「预览」：选一个入口，实时算出会投递到哪些出口，并逐条显示规则命中情况
+- **路由**栏多一个「路由测试」：选一个入口 → 点「测试」→ 先列出**命中的规则**，再列出**最终出口**（按命中顺序去重，已停用的会标注）；未命中的规则收在折叠区，排查时再展开
 - **出口**编辑时类型锁定、凭据表单默认收起；勾「重新填写凭据」才展开（避免把打码值写回去）
 - **发送日志**可按出口过滤（下拉），支持 sent / skipped / failed 三种结果展示
 - 一条规则都没配时，规则栏会提示「现在任何入口都发不出消息」
