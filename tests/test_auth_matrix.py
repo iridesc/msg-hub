@@ -79,19 +79,26 @@ def routed_entry(client: TestClient, name: str = "监控平台") -> dict:
 
 
 # ── 入口生命周期 ──────────────────────────────────────────
-def test_create_entry_returns_plaintext_once(cfg):
+def test_entry_secret_is_always_readable(cfg):
+    """token 不是「只显示一次」：列表和详情随时能拿回明文。"""
     with make_client(cfg) as client:
         entry = make_entry(client, tags=["app:pibox"])
         assert entry["secret"].startswith("mh_")
         assert entry["prefix"] == entry["secret"][:9]
         assert entry["tags"] == ["app:pibox"]
 
-        # 后续列表不再给明文
         listed = client.get("/api/entries", headers=admin()).json()["entries"]
         assert len(listed) == 1
-        assert "secret" not in listed[0]
-        assert listed[0]["prefix"] == entry["prefix"]
+        assert listed[0]["secret"] == entry["secret"]
         assert listed[0]["tags"] == ["app:pibox"]
+
+        detail = client.get(f"/api/entries/{entry['id']}", headers=admin()).json()["entry"]
+        assert detail["secret"] == entry["secret"]
+
+        # 改了标签再读，token 不变
+        client.patch(f"/api/entries/{entry['id']}", json={"tags": ["app:x"]}, headers=admin())
+        again = client.get(f"/api/entries/{entry['id']}", headers=admin()).json()["entry"]
+        assert again["secret"] == entry["secret"]
 
 
 def test_list_entries_empty_by_default(cfg):
@@ -245,6 +252,15 @@ def test_admin_without_channel_also_uses_route(cfg):
         make_rule(client, name="所有入口")
         ok_response = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
         assert ok_response.status_code == 200
+
+
+def test_entry_cannot_read_its_own_secret(cfg):
+    """明文只对管理员开放：入口 token 自己删不掉、也查不到明文。"""
+    with make_client(cfg) as client:
+        entry = make_entry(client)
+        headers = bearer(entry["secret"])
+        assert client.get("/api/entries", headers=headers).status_code == 403
+        assert client.get(f"/api/entries/{entry['id']}", headers=headers).status_code == 403
 
 
 def test_unknown_bearer_is_unauthorized(cfg):

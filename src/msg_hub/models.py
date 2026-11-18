@@ -193,8 +193,14 @@ ENTRY_BYTES = 16  # 32 个 hex 字符
 class Entry:
     """一个调用入口 = 一把 token + 一组标签（明文存储）。
 
-    明文存储是有意选择：方便随时复制，与 webhook_key 同等待遇。
-    防护靠 0600 权限 + 接口返回时打码（只露前缀），日志也只记前缀。
+    明文存储 + 明文回显是有意选择：token 随时要拿给调用方配置，只显示一次
+    很容易丢（丢了只能删入口重建，会把线上调用打断）。防护只剩三层：
+
+      1. state.json 权限 0600
+      2. 入口相关的接口全部只对管理员开放（入口 token 看不到自己的明文）
+      3. 审计日志只记前缀，不记明文
+
+    代价：能打开 dashboard 的人就能看到所有 token 明文（截图/录屏会带出去）。
     """
 
     id: int
@@ -232,10 +238,15 @@ class Entry:
         }
 
     def to_public(self) -> dict[str, Any]:
-        """接口返回用：不包含完整 secret。"""
+        """管理面返回用：**包含明文 secret**（管理员随时可查）。
+
+        只用于 /api/entries 系列与 dashboard；嵌入到其他响应里请改用 to_brief()，
+        避免 token 在无关的地方扩散。
+        """
         return {
             "id": self.id,
             "name": self.name,
+            "secret": self.secret,
             "prefix": self.prefix,
             "masked": self.masked,
             "tags": self.tags,
@@ -243,6 +254,16 @@ class Entry:
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "usage_count": self.usage_count,
+        }
+
+    def to_brief(self) -> dict[str, Any]:
+        """嵌进其他响应时用：不含明文，只留身份与标签。"""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "prefix": self.prefix,
+            "tags": self.tags,
+            "enabled": self.enabled,
         }
 
     @classmethod

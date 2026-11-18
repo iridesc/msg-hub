@@ -248,12 +248,7 @@ def _entry_create(
     tags: list[str] | str | None = None,
     enabled: bool = True,
 ) -> dict[str, Any]:
-    entry = hub.create_entry(name, tags=tags, enabled=enabled)
-    return {
-        "ok": True,
-        "entry": entry,
-        "notice": "token 明文只在本响应中出现一次，请立即保存；之后只能看到前缀。",
-    }
+    return {"ok": True, "entry": hub.create_entry(name, tags=tags, enabled=enabled)}
 
 
 def _entry_update(
@@ -396,7 +391,10 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="entry_list",
-        description="列出所有入口（持 token 的调用方）：id、名称、标签、是否启用、用量。不含明文 token。",
+        description=(
+            "列出所有入口（持 token 的调用方）：id、名称、标签、**明文 token**、是否启用、用量。"
+            "token 随时可查，丢了不用重建入口。"
+        ),
         params=(),
         handler=_entry_list,
         admin_only=True,
@@ -404,7 +402,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="entry_create",
         description=(
-            "新建入口并生成一把 token（明文只在本次响应返回一次）。"
+            "新建入口并生成一把 token（之后可随时用 entry_list 查回明文）。"
             "tags 决定能命中哪些路由规则，建议 key:value 形式（如 app:pibox、kind:alert）。"
         ),
         params=(

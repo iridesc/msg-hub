@@ -122,7 +122,7 @@ curl -s -X POST localhost:8788/api/channels \
       }' | jq
 ```
 
-3. 建入口（拿到 token，明文只返回一次）：
+3. 建入口（token 随时可查，丢了不用重建）：
 
 ```bash
 curl -s -X POST localhost:8788/api/entries \
@@ -284,8 +284,8 @@ networks:
 
 | 工具 | 作用 |
 |---|---|
-| `entry_list` | 列出入口（id / 名称 / 标签 / 前缀 / 用量），不含明文 |
-| `entry_create` | 新建入口并生成 token（**明文只返回一次**） |
+| `entry_list` | 列出入口（id / 名称 / 标签 / **明文 token** / 用量） |
+| `entry_create` | 新建入口并生成 token |
 | `entry_update` | 改名称 / 标签 / 启停（不换 token） |
 | `entry_delete` | 删除（该 token 立即失效） |
 
@@ -350,8 +350,8 @@ kind:alert    kind:daily       team:ops    team:ea
 | PATCH | `/api/channels/{ref}` | 修改出口（含 `tags`） |
 | DELETE | `/api/channels/{ref}` | 删除出口 |
 | POST | `/api/channels/{ref}/test` | 测试（`{"dry_run": true}`；带 `settings`+`type` 可试未保存的配置） |
-| GET | `/api/entries` | 入口列表（不含明文） |
-| POST | `/api/entries` | 新建入口（**返回明文 token，仅一次**） |
+| GET | `/api/entries` | 入口列表（**含明文 token**，仅管理员） |
+| POST | `/api/entries` | 新建入口（返回明文 token） |
 | GET | `/api/entries/{ref}` | 入口详情 |
 | PATCH | `/api/entries/{ref}` | 改名称 / `tags` / 启停 |
 | DELETE | `/api/entries/{ref}` | 删除入口 |
@@ -369,7 +369,7 @@ kind:alert    kind:daily       team:ops    team:ea
 | 通道 | 凭据 | 配置位置 | 能干什么 |
 |---|---|---|---|
 | **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由预览、发消息 |
-| **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口** |
+| **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口**；明文可随时查（仅管理员） |
 
 管理员密码没配就拒绝启动；入口 token 是可选的第二条通道，**不建入口时管理员照常能发消息**，不会出现「无鉴权」状态。
 
@@ -392,7 +392,7 @@ kind:alert    kind:daily       team:ops    team:ea
 # 管理员（浏览器弹框用同一对凭据）
 curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" localhost:8788/api/channels
 
-# 外部系统：建入口拿 token（明文只显示一次）
+# 外部系统：建入口拿 token（之后随时 GET /api/entries 能查回）
 curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" -X POST localhost:8788/api/entries \
   -H 'Content-Type: application/json' -d '{"name":"监控平台","tags":["app:monitor"]}'
 # → {"ok":true,"entry":{"id":1,"prefix":"mh_2f8a1c","secret":"mh_2f8a1c…"}}
@@ -651,7 +651,9 @@ echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' \
 
 - **HTTP 模式强制鉴权**：没配 `MSG_HUB_ADMIN_PASSWORD` 就拒绝启动（不是打个警告继续跑）；密码太短会给警告
 - **凭据文件权限 0600**，索引/日志同样 0600；`data/` 已在 `.gitignore`
-- 接口返回的凭据一律打码，审计日志只存消息前 100 字
+- 出口凭据（webhook_key / SMTP 密码）接口返回一律打码；**入口 token 则明文回显**
+  ——token 要反复拿给调用方配置，只显示一次容易丢（丢了只能删入口重建，会打断线上调用）。
+  代价是所有能打开 dashboard 的人都能看到全部 token，注意截图/录屏；审计日志仍只记前缀
 - `@所有人` 默认禁止，需在渠道 `options.allow_mention_all` 显式开启
 - 建议只在 127.0.0.1 或内网暴露；跨容器通过 compose 网络访问，不要开公网端口
 - 审计日志可回答"这条消息到底发没发"；审计写失败不会把已发出的消息变成失败（否则调用方重试会发两遍）

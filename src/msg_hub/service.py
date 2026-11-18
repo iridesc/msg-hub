@@ -234,14 +234,12 @@ class Hub:
         tags: list[str] | str | None = None,
         enabled: bool = True,
     ) -> dict[str, Any]:
-        """新建入口。返回值**包含明文 token**，仅此一次。"""
+        """新建入口。返回值包含明文 token（之后随时可在 entry_list 查看）。"""
         name = str(name or "").strip()
         if not name:
             raise HubError("invalid_argument", "入口名称不能为空")
         entry = self.store.insert_entry(name, tags=normalize_tags(tags), enabled=enabled)
-        data = entry.to_public()
-        data["secret"] = entry.secret  # 只在这里出现一次
-        return data
+        return entry.to_public()
 
     def update_entry(
         self,
@@ -351,7 +349,7 @@ class Hub:
         rules = self.store.rules()
         selection = routing.select(rules, entry, channels)
         return {
-            "entry": entry.to_public() if entry else None,
+            "entry": entry.to_brief() if entry else None,
             "outbounds": [self._describe(channel) for channel in selection.channels],
             "matched_rules": selection.matched_rules,
             "trace": routing.explain(rules, entry, channels),
@@ -606,7 +604,7 @@ class Hub:
                 raise HubError(
                     "no_route",
                     self._no_route_message(identity, entry, selection),
-                    entry=entry.to_public() if entry else {"type": "admin"},
+                    entry=entry.to_brief() if entry else {"type": "admin"},
                     total_rules=selection.total_rules,
                     enabled_rules=selection.enabled_rules,
                     available_channels=[

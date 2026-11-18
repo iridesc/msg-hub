@@ -132,11 +132,16 @@ def test_token_plaintext_is_stored(cfg):
     assert raw["entries"][0]["secret"] == token.secret
 
 
-def test_token_public_view_hides_secret(cfg):
+def test_entry_public_view_always_exposes_secret(cfg):
+    """token 随时可查：管理面视图直接带明文，丢了不用重建入口。"""
     store = Store(cfg)
     token = store.insert_entry("监控平台")
     public = token.to_public()
-    assert "secret" not in public
+    assert public["secret"] == token.secret
+    # 嵌进其他响应时用 to_brief，避免明文到处扩散
+    brief = token.to_brief()
+    assert "secret" not in brief
+    assert brief["prefix"] == token.prefix
     assert public["prefix"] == token.prefix
     assert public["masked"] == f"***{token.secret[-4:]}"
 

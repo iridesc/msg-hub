@@ -76,6 +76,11 @@
   }
   .tag.hl { color: var(--accent); border-color: rgba(76,141,255,.5); }
   .tag.warn { color: var(--warn); border-color: rgba(210,153,34,.5); }
+  .token {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; color: var(--accent); user-select: all;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .cond { font-size: 12px; color: var(--muted); }
   .cond b { color: var(--fg); font-weight: 500; }
   .arrow { color: var(--off); }
@@ -213,9 +218,13 @@
       <label><span class="lb">名称 <b>*</b></span><input type="text" id="e-name" placeholder="如：pibox-alert"></label>
       <label><span class="lb">标签</span><input type="text" id="e-tags" placeholder="逗号分隔，如 app:pibox,kind:alert">
         <div class="hint">规则靠这些标签决定这把 token 能发到哪些出口</div></label>
-      <div id="e-prefix-box" class="hidden">
-        <div class="sec">凭据</div>
-        <div class="muted">token 前缀：<code id="e-prefix"></code>（明文只在创建时显示一次，无法查看）</div>
+      <div id="e-token-box" class="hidden">
+        <div class="sec">Token</div>
+        <div class="row">
+          <code class="token grow" id="e-token" style="word-break:break-all"></code>
+          <button class="link" id="e-copy">复制</button>
+        </div>
+        <div class="hint">随时可查，不用重建入口。任何能打开本页的人都能看到，注意截图/录屏。</div>
       </div>
       <label class="checkline" id="e-enabled-box" style="margin-top:12px">
         <span class="switch"><input type="checkbox" id="e-enabled" checked><span></span></span>
@@ -452,7 +461,10 @@ function renderEntries() {
         </label>
       </div>
       <div class="row sub">
-        <code class="muted">${esc(e.prefix)}…</code>
+        <code class="token" title="点击复制">${esc(e.secret)}</code>
+        <button class="link copy" data-copy="${esc(e.secret)}" title="复制 token">复制</button>
+      </div>
+      <div class="row sub">
         ${tagList(e.tags, "hl")}
         <span class="grow"></span>
         <span class="muted">${e.usage_count || 0} 次</span>
@@ -590,8 +602,8 @@ function openEntryModal(entry) {
   $("e-name").value = entry ? entry.name : "";
   $("e-tags").value = entry ? (entry.tags || []).join(",") : "";
   $("e-enabled").checked = entry ? entry.enabled : true;
-  $("e-prefix").textContent = entry ? entry.prefix + "…" : "";
-  $("e-prefix-box").classList.toggle("hidden", !entry);
+  $("e-token").textContent = entry ? entry.secret : "";
+  $("e-token-box").classList.toggle("hidden", !entry);
   $("e-enabled-box").classList.toggle("hidden", !entry);
   $("e-delete").classList.toggle("hidden", !entry);
   $("e-submit").textContent = entry ? "保存" : "生成 Token";
@@ -946,7 +958,8 @@ $("log-filter").onchange = () => { LOG_FILTER = $("log-filter").value; renderLog
 // 点击行 → 弹出编辑（点开关不触发）
 function bindRowClick(listId, lookup, opener) {
   $(listId).onclick = (event) => {
-    if (event.target.closest("label.switch")) return;
+    // 点开关 / 点复制 都不算「打开编辑」
+    if (event.target.closest("label.switch, [data-copy]")) return;
     const item = event.target.closest("li.item");
     if (!item) return;
     const id = Number(Object.values(item.dataset)[0]);
@@ -965,6 +978,22 @@ async function toggle(kind, id, enabled) {
     await refresh();
   } catch (err) { toast(err.message, true); }
 }
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("token 已复制到剪贴板");
+  } catch (_) {
+    toast("复制失败，请手动选中复制", true);
+  }
+}
+$("e-copy").onclick = () => copyText($("e-token").textContent);
+
+$("list-entries").addEventListener("click", (event) => {
+  const copy = event.target.closest("[data-copy]");
+  if (!copy) return;
+  copyText(copy.dataset.copy);
+});
 
 $("list-entries").addEventListener("change", (event) => {
   const input = event.target.closest("input[data-entry-toggle]");
