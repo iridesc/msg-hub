@@ -82,6 +82,21 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     # 点行弹窗修改：三个编辑弹窗都在
     for modal in ("entry-modal", "rule-modal", "channel-modal"):
         assert f'id="{modal}"' in body, modal
+    # 左侧边栏切换「日志 / 配置」，两个视图各自独立
+    assert 'class="side"' in body
+    for view in ("logs", "config"):
+        assert f'id="view-{view}"' in body, view
+        assert f'data-view="{view}"' in body, view
+    # 统计卡片搬进日志视图（不再在三栏上方）
+    logs_view = body.split('id="view-logs"')[1]
+    assert 'id="stats"' in logs_view
+    assert body.index('id="stats"') > body.index('id="view-logs"')
+    # 日志筛选栏：关键词 + 结果 + 出口 + 来源 + 时间
+    for field in ("f-q", "f-result", "f-channel", "f-source", "f-range"):
+        assert f'id="{field}"' in logs_view, field
+    assert 'id="f-reset"' in logs_view
+    # 旧的单一下拉已经换掉
+    assert 'id="log-filter"' not in body
     # 页面里不能出现密码
     assert password not in body
 
@@ -159,9 +174,10 @@ def test_stats_aggregates_channels_and_sends(cfg):
         body = client.get("/api/stats", headers=basic("secret")).json()
     assert body["channels"]["total"] == 1
     assert body["channels"]["ok"] == 1
-    assert body["sends"]["sampled"] == 1
-    assert body["sends"]["ok"] == 1
-    assert body["sends"]["by_channel"][0]["name"] == "工作群1"
+    # dry_run 不进成功率：只校验不真发，成功几乎是必然，混进去会把成功率撑高
+    assert body["sends"]["sampled"] == 0
+    assert body["sends"]["dry_run"] == 1
+    assert body["sends"]["by_channel"] == []
 
 
 def test_manual_channel_lifecycle_through_api(cfg):

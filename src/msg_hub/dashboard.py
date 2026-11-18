@@ -70,10 +70,15 @@ def summarize_channels(hub: Hub) -> dict[str, Any]:
 
 
 def summarize_sends(hub: Hub, limit: int = 500) -> dict[str, Any]:
-    """最近发送情况汇总（基于审计日志）。"""
+    """最近发送情况汇总（基于审计日志）。
+
+    dry_run 单独计数、不进成功率：它只校验配置、几乎必然成功，混进来会把成功率撑高。
+    """
     records = hub.audit.query(limit=limit)
+    real = [record for record in records if not record.get("dry_run")]
     by_channel: dict[Any, dict[str, Any]] = {}
-    for record in records:
+    for record in real:
+        # 只统计真实发送，跟成功率同一口径
         info = record.get("channel") or {}
         channel_name = info.get("name")
         item = by_channel.setdefault(
@@ -84,11 +89,12 @@ def summarize_sends(hub: Hub, limit: int = 500) -> dict[str, Any]:
             item["ok"] += 1
         else:
             item["failed"] += 1
-    succeeded = sum(1 for record in records if record.get("ok"))
+    succeeded = sum(1 for record in real if record.get("ok"))
     return {
-        "sampled": len(records),
+        "sampled": len(real),
         "ok": succeeded,
-        "failed": len(records) - succeeded,
+        "failed": len(real) - succeeded,
+        "dry_run": len(records) - len(real),
         "last_at": records[0].get("ts") if records else None,
         "by_channel": sorted(by_channel.values(), key=lambda item: -(item["ok"] + item["failed"])),
     }

@@ -50,6 +50,42 @@
   .stat .n.ok { color: var(--ok); } .stat .n.err { color: var(--err); }
   .stat .n.warn { color: var(--warn); } .stat .n.off { color: var(--off); }
 
+  /* ── 外壳：左侧边栏 + 内容区 ─────────────────────── */
+  .shell { display: flex; align-items: flex-start; }
+  .side {
+    width: 168px; flex: none; padding: 14px 0 14px 20px;
+    position: sticky; top: 57px;
+  }
+  .side a {
+    display: flex; align-items: center; gap: 8px; padding: 7px 11px; margin-bottom: 3px;
+    border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 13px;
+  }
+  .side a:hover { background: var(--panel-2); color: var(--fg); }
+  .side a.on { background: var(--panel-2); color: var(--fg); font-weight: 500; }
+  .side a .badge {
+    margin-left: auto; font-size: 11px; color: var(--muted); font-weight: 400;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 0 6px;
+  }
+  .content { flex: 1; min-width: 0; }
+  .view.hidden { display: none; }
+  @media (max-width: 820px) {
+    .shell { flex-direction: column; }
+    .side {
+      width: 100%; display: flex; gap: 6px; padding: 12px 20px 0;
+      position: static; border-bottom: 1px solid var(--line); padding-bottom: 10px;
+    }
+    .side a { margin-bottom: 0; width: auto; }
+  }
+
+  /* ── 筛选栏 ─────────────────────────────────────── */
+  .filters {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 14px 20px 0;
+  }
+  .filters input[type=text] { width: 240px; }
+  .filters select { width: auto; min-width: 116px; }
+  .filters .count { color: var(--muted); font-size: 12px; margin-left: auto; }
+
   /* ── 三栏 ───────────────────────────────────────── */
   .tri { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; padding: 14px 20px 0; align-items: start; }
   @media (max-width: 1100px) { .tri { grid-template-columns: 1fr; } }
@@ -149,8 +185,15 @@
   <button id="btn-refresh">刷新</button>
 </header>
 
-<section id="stats" class="stats"></section>
+<div class="shell">
+  <aside class="side">
+    <a href="#/logs" data-view="logs">日志<span class="badge" id="badge-logs">0</span></a>
+    <a href="#/config" data-view="config">配置</a>
+  </aside>
+  <main class="content">
 
+  <!-- ── 配置视图 ─────────────────────────────────── -->
+  <div id="view-config" class="view">
 <div class="tri">
   <!-- 入口 -->
   <section class="panel">
@@ -186,17 +229,35 @@
     <ul class="list" id="list-channels"></ul>
   </section>
 </div>
+  </div>
+
+  <!-- ── 日志视图 ─────────────────────────────────── -->
+  <div id="view-logs" class="view">
+    <section id="stats" class="stats"></section>
+
+    <div class="filters">
+      <input type="text" id="f-q" placeholder="搜索内容 / 出口 / 调用者 / 错误码">
+      <select id="f-result">
+        <option value="">全部结果</option>
+        <option value="ok">成功</option>
+        <option value="failed">失败</option>
+        <option value="skipped">跳过</option>
+        <option value="dry">dry_run</option>
+      </select>
+      <select id="f-channel"><option value="">全部出口</option></select>
+      <select id="f-source"><option value="">全部来源</option></select>
+      <select id="f-range">
+        <option value="">全部时间</option>
+        <option value="1h">近 1 小时</option>
+        <option value="24h">近 24 小时</option>
+        <option value="7d">近 7 天</option>
+      </select>
+      <button class="link" id="f-reset">重置</button>
+      <span class="count" id="log-sub"></span>
+    </div>
 
 <section class="logs">
   <div class="panel">
-    <div class="panel-head">
-      <h2>发送日志</h2>
-      <span class="muted" id="log-sub"></span>
-      <span class="grow"></span>
-      <select id="log-filter" style="width:auto;min-width:160px">
-        <option value="">全部出口</option>
-      </select>
-    </div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -208,6 +269,10 @@
     </div>
   </div>
 </section>
+  </div>
+
+  </main>
+</div>
 
 <!-- ── 入口弹窗 ───────────────────────────────────── -->
 <div id="entry-modal" class="modal hidden">
@@ -393,7 +458,11 @@ let ENTRIES = [];
 let RULES = [];
 let TYPES = [];
 let LOGS = [];
-let LOG_FILTER = "";
+// 日志筛选（全在客户端做：一次拉 500 条，切筛选不发请求）
+const FILTER = { q: "", result: "", channel: "", source: "", range: "" };
+const RANGE_MS = { "1h": 3600e3, "24h": 86400e3, "7d": 7 * 86400e3 };
+const VIEWS = ["logs", "config"];
+let VIEW = "logs";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -437,7 +506,8 @@ const closeAll = () => MODALS.forEach(hide);
 // ── 统计 ────────────────────────────────────────────────
 function renderStats(stats) {
   const c = stats.channels, s = stats.sends;
-  const rate = s.sampled ? Math.round((s.ok / s.sampled) * 100) : 0;
+  // 成功率只算真实发送（dry_run 由后端剔除），没真发过就显示 —
+  const rate = s.sampled ? Math.round((s.ok / s.sampled) * 100) + "%" : "—";
   $("stats").innerHTML = [
     ["入口", ENTRIES.length, ""],
     ["规则", RULES.length, RULES.some((r) => r.enabled) ? "" : "warn"],
@@ -445,7 +515,7 @@ function renderStats(stats) {
     ["可用", c.ok, "ok"],
     ["已停用", c.disabled, "off"],
     ["损坏", c.broken, "err"],
-    ["成功率", s.sampled ? rate + "%" : "—", ""],
+    ["成功率", rate, ""],
   ].map(([k, n, cls]) =>
     `<div class="stat"><div class="n ${cls}">${esc(n)}</div><div class="k">${esc(k)}</div></div>`
   ).join("");
@@ -528,12 +598,6 @@ function renderChannels() {
       </div>
     </li>`).join("") || `<li class="empty">还没有出口，点右上角 ＋</li>`;
 
-  // 日志过滤下拉
-  const select = $("log-filter");
-  const current = LOG_FILTER;
-  select.innerHTML = `<option value="">全部出口</option>` + CHANNELS.map((c) =>
-    `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
-  select.value = current;
 }
 
 // ── 日志 ────────────────────────────────────────────────
@@ -554,31 +618,84 @@ function ruleChips(record) {
       + (index < rules.length - 1 ? " " : "")).join("");
 }
 
+// 一条日志归一成 成功 / 失败 / 跳过 / dry_run
+function logResult(record) {
+  if (record.dry_run) return "dry";
+  const outcome = record.outcome || (record.ok ? "sent" : "failed");
+  return outcome === "sent" ? "ok" : outcome === "skipped" ? "skipped" : "failed";
+}
+
+function logHaystack(record) {
+  return [
+    record.text_preview,
+    (record.channel || {}).name,
+    (record.actor || {}).name,
+    record.error_code,
+    record.source,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function filteredLogs() {
+  const now = Date.now();
+  const q = FILTER.q.trim().toLowerCase();
+  return LOGS.filter((record) => {
+    if (FILTER.result && logResult(record) !== FILTER.result) return false;
+    if (FILTER.channel && (record.channel || {}).name !== FILTER.channel) return false;
+    if (FILTER.source && (record.source || "") !== FILTER.source) return false;
+    if (FILTER.range) {
+      const at = Date.parse(record.ts || "");
+      if (!at || now - at > RANGE_MS[FILTER.range]) return false;
+    }
+    if (q && !logHaystack(record).includes(q)) return false;
+    return true;
+  });
+}
+
+function fillSelect(id, values, allLabel, current) {
+  const select = $(id);
+  select.innerHTML = `<option value="">${allLabel}</option>`
+    + values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  select.value = values.includes(current) ? current : "";
+}
+
+// 出口 / 来源的候选值从日志里取（只列真的出现过的，避免一堆空选项）
+function refreshLogCandidates() {
+  const pick = (getter) => [...new Set(LOGS.map(getter).filter(Boolean))];
+  fillSelect("f-channel", pick((r) => (r.channel || {}).name), "全部出口", FILTER.channel);
+  fillSelect("f-source", pick((r) => r.source), "全部来源", FILTER.source);
+  FILTER.channel = $("f-channel").value;
+  FILTER.source = $("f-source").value;
+}
+
 function renderLogs() {
-  const records = LOG_FILTER === ""
-    ? LOGS
-    : LOGS.filter((r) => (r.channel || {}).name === LOG_FILTER);
-  $("log-sub").textContent = `最近 ${records.length} 条`;
-  $("logs").innerHTML = records.map((r) => {
-    const info = r.channel || {};
-    const outcome = r.outcome || (r.ok ? "sent" : "failed");
-    const result = r.dry_run ? `<span class="pill dry">dry_run</span>`
-      : outcome === "sent" ? `<span class="pill ok">成功</span>`
-      : outcome === "skipped" ? `<span class="pill warn">跳过</span>`
+  const records = filteredLogs();
+  const filtered = FILTER.q || FILTER.result || FILTER.channel || FILTER.source || FILTER.range;
+  $("log-sub").textContent = filtered
+    ? `筛选出 ${records.length} / ${LOGS.length} 条`
+    : `最近 ${LOGS.length} 条`;
+  $("badge-logs").textContent = String(LOGS.length);
+
+  $("logs").innerHTML = records.map((record) => {
+    const info = record.channel || {};
+    const result = logResult(record);
+    const pill = result === "dry" ? `<span class="pill dry">dry_run</span>`
+      : result === "ok" ? `<span class="pill ok">成功</span>`
+      : result === "skipped" ? `<span class="pill warn">跳过</span>`
       : `<span class="pill err">失败</span>`;
     return `<tr>
-      <td class="muted">${esc((r.ts || "").replace("T", " ").slice(0, 19))}</td>
-      <td>${actorLabel(r.actor)}</td>
-      <td class="muted">${esc(r.source || "")}</td>
+      <td class="muted">${esc((record.ts || "").replace("T", " ").slice(0, 19))}</td>
+      <td>${actorLabel(record.actor)}</td>
+      <td class="muted">${esc(record.source || "")}</td>
       <td>${esc(info.name || "")}</td>
-      <td>${ruleChips(r)}</td>
-      <td class="muted">${esc(r.format || "")}</td>
-      <td>${result}</td>
-      <td class="muted">${esc(r.error_code || "")}</td>
-      <td>${esc(r.text_preview || "")}</td>
-      <td class="muted">${r.elapsed_ms != null ? r.elapsed_ms + "ms" : ""}</td>
+      <td>${ruleChips(record)}</td>
+      <td class="muted">${esc(record.format || "")}</td>
+      <td>${pill}</td>
+      <td class="muted">${esc(record.error_code || "")}</td>
+      <td>${esc(record.text_preview || "")}</td>
+      <td class="muted">${record.elapsed_ms != null ? record.elapsed_ms + "ms" : ""}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="10" class="muted" style="padding:14px">还没有发送记录</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="muted" style="padding:14px">${
+    LOGS.length ? "没有符合筛选条件的记录" : "还没有发送记录"}</td></tr>`;
 }
 
 // ── 加载 ────────────────────────────────────────────────
@@ -602,6 +719,7 @@ async function refresh() {
     renderEntries();
     renderRules();
     renderChannels();
+    refreshLogCandidates();
     renderLogs();
   } catch (err) {
     toast(err.message || "加载失败", true);
@@ -1049,7 +1167,40 @@ $("secret-copy").onclick = async () => {
   }
 };
 
-$("log-filter").onchange = () => { LOG_FILTER = $("log-filter").value; renderLogs(); };
+// ── 视图切换（hash 路由，刷新后停在原页面）──────────
+function setView(name) {
+  VIEW = VIEWS.includes(name) ? name : "logs";
+  for (const view of VIEWS) {
+    const box = $("view-" + view);
+    if (box) box.classList.toggle("hidden", view !== VIEW);
+  }
+  document.querySelectorAll(".side a").forEach((a) => {
+    a.classList.toggle("on", a.dataset.view === VIEW);
+  });
+  if (location.hash !== "#/" + VIEW) history.replaceState(null, "", "#/" + VIEW);
+}
+document.querySelectorAll(".side a").forEach((a) => {
+  a.onclick = (event) => { event.preventDefault(); setView(a.dataset.view); };
+});
+window.addEventListener("hashchange", () => setView((location.hash || "").replace("#/", "")));
+
+// ── 日志筛选 ────────────────────────────────────────
+const FILTER_INPUTS = [
+  ["f-q", "q", "input"],
+  ["f-result", "result", "change"],
+  ["f-channel", "channel", "change"],
+  ["f-source", "source", "change"],
+  ["f-range", "range", "change"],
+];
+for (const [id, key, on] of FILTER_INPUTS) {
+  $(id).addEventListener(on, () => { FILTER[key] = $(id).value; renderLogs(); });
+}
+$("f-reset").onclick = () => {
+  FILTER.q = FILTER.result = FILTER.channel = FILTER.source = FILTER.range = "";
+  $("f-q").value = "";
+  for (const id of ["f-result", "f-channel", "f-source", "f-range"]) $(id).value = "";
+  renderLogs();
+};
 
 // 点击行 → 弹出编辑（点开关不触发）
 function bindRowClick(listId, lookup, opener) {
@@ -1109,6 +1260,7 @@ for (const id of MODALS) {
 }
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeAll(); });
 
+setView((location.hash || "#/logs").replace("#/", ""));
 refresh();
 </script>
 </body>
