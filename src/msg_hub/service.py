@@ -438,11 +438,15 @@ class Hub:
         source: str,
         *,
         strict: bool,
+        matched_rules: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """向单个出口投递。
 
         strict=True（管理员直连）：任何问题都抛出，保持 v2 的语义。
         strict=False（路由扇出）：问题记为 skipped/failed，不中断其他出口。
+
+        matched_rules 是**选中本出口的规则**（不是本次请求命中的全部规则）——
+        日志是按出口一行的，所以每一行只记「为什么发到你这个出口」。
         """
         info = self._info(channel)
         try:
@@ -469,14 +473,14 @@ class Hub:
             if strict:
                 self._record(
                     info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                    outcome="failed",
+                    outcome="failed", matched_rules=matched_rules, routed=not strict,
                 )
                 raise
             # 配置类问题算「跳过」，不算投递失败——避免一个不兼容的出口
             # 把整个多出口请求污染成 partial
             self._record(
                 info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                outcome="skipped",
+                outcome="skipped", matched_rules=matched_rules, routed=not strict,
             )
             return {
                 "channel": info,
@@ -499,12 +503,12 @@ class Hub:
             if strict:
                 self._record(
                     info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                    outcome="failed",
+                    outcome="failed", matched_rules=matched_rules, routed=not strict,
                 )
                 raise
             self._record(
                 info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                outcome="failed",
+                outcome="failed", matched_rules=matched_rules, routed=not strict,
             )
             return {
                 "channel": info,
@@ -515,7 +519,7 @@ class Hub:
 
         self._record(
             info, message, request_id, source, dry_run, None, "发送成功", result.elapsed_ms,
-            outcome="sent",
+            outcome="sent", matched_rules=matched_rules, routed=not strict,
         )
         return {
             "channel": info,
@@ -525,6 +529,15 @@ class Hub:
             "message_id": result.message_id,
             "elapsed_ms": result.elapsed_ms,
         }
+
+    @staticmethod
+    def _rules_for(channel: Channel, matched: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """从命中规则里挑出「真正选中了这个出口」的那些（日志按出口一行）。"""
+        return [
+            {"id": rule["id"], "name": rule["name"]}
+            for rule in matched
+            if channel.id in (rule.get("outbounds") or [])
+        ]
 
     def _identity_entry(self, identity: Identity) -> Entry | None:
         """把当前身份翻译成入口对象（管理员返回 None）。"""
@@ -604,7 +617,10 @@ class Hub:
 
         # ── 2. 逐个出口发送（串行，保持可预期）─────────────
         results = [
-            self._deliver(target, message, request_id, dry_run, source, strict=strict)
+            self._deliver(
+                target, message, request_id, dry_run, source, strict=strict,
+                matched_rules=self._rules_for(channel=target, matched=matched_rules),
+            )
             for target in targets
         ]
 
@@ -721,6 +737,8 @@ class Hub:
         elapsed_ms: int | None,
         *,
         outcome: str = "sent",
+        matched_rules: list[dict[str, Any]] | None = None,
+        routed: bool | None = None,
     ) -> None:
         """写审计日志。
 
@@ -741,6 +759,8 @@ class Hub:
                     "actor": actor,
                     "dry_run": dry_run,
                     "outcome": outcome,
+                    "matched_rules": list(matched_rules or []),
+                    "routed": routed,
                     "channel": channel,
                     "format": message.format,
                     "chars": len(message.text),

@@ -50,7 +50,8 @@ curl / 脚本          → │ /api   REST                              │
 - **进程隔离的插件模型**：一个类型 = 一个目录 = 一个 `send_msg.py`，崩了也不影响主程序
 - **单一状态文件**：出口、凭据、护栏、入口、路由规则全在 `state.json`（`0600`）——一次原子写 = 不会出现「有渠道无配置」的烂数据，接口返回一律打码
 - **防误发**：名称模糊匹配到多个时**报错并给候选**，绝不猜；`dry_run` 先校验；`@all` 需显式开启；单渠道限流
-- **审计日志**：每条发送（含 dry_run、失败）写 `logs/YYYY-MM-DD.jsonl`，`message_logs` 可查
+- **审计日志**：每条发送（含 dry_run、失败）写 `logs/YYYY-MM-DD.jsonl`，带上**命中的规则**与 `request_id`，
+  能直接回答「这条消息为什么发到了这个出口」
 - **两种部署形态**：HTTP 服务（compose，供外部系统调用）/ **stdio 子进程（零依赖，直接塞进 pi-box 等宿主）**
 - **自带 Dashboard**：HTTP 形态带一个单页看板（入口 / 路由 / 出口 三栏并列，点行弹窗改），能手工启停增删、编辑标签与规则，并带「路由预览」看某入口会发到哪些出口
 - **零外部依赖**：核心只用标准库（无 pip 包），没有数据库、没有 MQ
@@ -486,6 +487,29 @@ data/
   "deleted": [ /* 软删除的出口，含 settings，可直接人工恢复 */ ]
 }
 ```
+
+### 审计日志字段
+
+扇出时**每个出口写一条**，共用同一个 `request_id`：
+
+```jsonc
+{
+  "ts": "2026-11-18T11:56:51+08:00",
+  "request_id": "94d905199abd",     // 一次请求内多个出口共享，可据此聚合
+  "source": "api",                  // api / mcp / test
+  "actor": {"type": "entry", "id": 1, "name": "监控平台", "prefix": "mh_2f8a1c"},
+  "routed": true,                   // false = 管理员直连
+  "matched_rules": [{"id": 1, "name": "应用的告警 → 告警群"}],  // 选中本出口的规则
+  "channel": {"id": 1, "name": "运维告警群", "type": "wecom_bot"},
+  "outcome": "sent",                // sent / skipped / failed
+  "dry_run": false,
+  "format": "plain", "chars": 42, "text_preview": "数据库连接池告警…",
+  "ok": true, "error_code": null, "elapsed_ms": 113
+}
+```
+
+`matched_rules` 只记**选中这个出口**的规则，不是本次请求命中的全部规则——
+日志是按出口一行的，这样每行都能自解释。管理员直连时 `routed=false`、`matched_rules=[]`。
 
 > `options` 是所有类型通用的护栏：
 

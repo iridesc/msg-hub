@@ -195,7 +195,7 @@
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>时间</th><th>调用者</th><th>来源</th><th>出口</th><th>格式</th><th>结果</th>
+          <th>时间</th><th>调用者</th><th>来源</th><th>出口</th><th>匹配规则</th><th>格式</th><th>结果</th>
           <th>错误</th><th>内容</th><th>耗时</th>
         </tr></thead>
         <tbody id="logs"></tbody>
@@ -516,6 +516,17 @@ function actorLabel(actor) {
   return `<span class="tag" title="entry #${esc(actor.id)} ${esc(actor.prefix || "")}">${esc(actor.name || "entry")}</span>`;
 }
 
+function ruleChips(record) {
+  const rules = record.matched_rules || [];
+  if (!rules.length) {
+    // routed === false 是管理员直连；null/undefined 是升级前的老日志
+    return `<span class="muted">${record.routed === false ? "直连" : "—"}</span>`;
+  }
+  return rules.map((rule, index) =>
+    `<span class="tag hl" title="规则 #${esc(rule.id)}">${esc(rule.name)}</span>`
+      + (index < rules.length - 1 ? " " : "")).join("");
+}
+
 function renderLogs() {
   const records = LOG_FILTER === ""
     ? LOGS
@@ -533,13 +544,14 @@ function renderLogs() {
       <td>${actorLabel(r.actor)}</td>
       <td class="muted">${esc(r.source || "")}</td>
       <td>${esc(info.name || "")}</td>
+      <td>${ruleChips(r)}</td>
       <td class="muted">${esc(r.format || "")}</td>
       <td>${result}</td>
       <td class="muted">${esc(r.error_code || "")}</td>
       <td>${esc(r.text_preview || "")}</td>
       <td class="muted">${r.elapsed_ms != null ? r.elapsed_ms + "ms" : ""}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="muted" style="padding:14px">还没有发送记录</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="muted" style="padding:14px">还没有发送记录</td></tr>`;
 }
 
 // ── 加载 ────────────────────────────────────────────────

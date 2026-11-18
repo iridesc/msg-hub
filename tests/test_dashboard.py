@@ -68,6 +68,8 @@ def test_dashboard_page_served_with_basic_auth(cfg):
         assert f'id="{add_id}"' in body, add_id
     assert 'class="add"' in body
     assert "btn-tab-" not in body
+    # 日志表要能看出「为什么发到这个出口」
+    assert "<th>匹配规则</th>" in body
     # 点行弹窗修改：三个编辑弹窗都在
     for modal in ("entry-modal", "rule-modal", "channel-modal"):
         assert f'id="{modal}"' in body, modal

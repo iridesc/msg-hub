@@ -272,6 +272,43 @@ def test_audit_log_written_per_outbound_with_same_request_id(cfg):
     assert entry["secret"] not in json.dumps(records, ensure_ascii=False)
 
 
+def test_audit_log_records_matched_rules_per_outbound(cfg):
+    """日志按出口一行，每行只记「选中了这个出口的规则」，而不是全部命中规则。"""
+    hub = Hub(cfg)
+    # 两个出口标签互斥，规则才能区分开
+    hub.create_channel(name="群A", type_name="wecom_bot", settings=WECOM_SETTINGS, tags=["kind:a"])
+    hub.create_channel(name="群B", type_name="wecom_bot", settings=WECOM_SETTINGS, tags=["kind:b"])
+    hub.create_rule("只在A", {"field": "tag", "op": "exact", "value": "kind:a"},
+                    entry={"field": "tag", "op": "exact", "value": "scope:a"})
+    hub.create_rule("只在B", {"field": "tag", "op": "exact", "value": "kind:b"},
+                    entry={"field": "tag", "op": "exact", "value": "scope:b"})
+    hub.create_rule("都命中", {"field": "tag", "op": "prefix", "value": "kind:"})
+    entry = hub.create_entry("e", tags=["scope:a", "scope:b"])
+
+    token = set_identity(Identity(role="entry", entry_id=entry["id"], entry_name="e"))
+    try:
+        hub.send("告警", dry_run=True)
+    finally:
+        reset_identity(token)
+
+    records = {record["channel"]["name"]: record for record in hub.logs()}
+    # 群A ← 只在A + 都命中；群B ← 只在B + 都命中
+    assert [r["name"] for r in records["群A"]["matched_rules"]] == ["只在A", "都命中"]
+    assert [r["name"] for r in records["群B"]["matched_rules"]] == ["只在B", "都命中"]
+    assert records["群A"]["routed"] is True
+    # 规则 id/name 都要有，便于 dashboard 悬停溯源
+    assert set(records["群A"]["matched_rules"][0]) == {"id", "name"}
+
+
+def test_audit_log_marks_direct_send_as_not_routed(cfg):
+    hub = Hub(cfg)
+    channel = hub.create_channel(name="群A", type_name="wecom_bot", settings=WECOM_SETTINGS)
+    hub.send("直连", channel=channel["id"], dry_run=True)
+    record = hub.logs()[0]
+    assert record["routed"] is False
+    assert record["matched_rules"] == []
+
+
 def test_route_preview_shows_trace(cfg):
     hub, entry = _hub_with(
         cfg,
