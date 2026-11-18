@@ -61,8 +61,16 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     assert "text/html" in response.headers["content-type"]
     body = response.text
     assert "msg-hub" in body
-    assert "添加出口" in body
-    assert "路由规则" in body
+    # 三栏并列 + 每栏右上角 ＋，且不再有页签按钮
+    for list_id in ("list-entries", "list-rules", "list-channels"):
+        assert f'id="{list_id}"' in body, list_id
+    for add_id in ("add-entry", "add-rule", "add-channel"):
+        assert f'id="{add_id}"' in body, add_id
+    assert 'class="add"' in body
+    assert "btn-tab-" not in body
+    # 点行弹窗修改：三个编辑弹窗都在
+    for modal in ("entry-modal", "rule-modal", "channel-modal"):
+        assert f'id="{modal}"' in body, modal
     # 页面里不能出现密码
     assert password not in body
 

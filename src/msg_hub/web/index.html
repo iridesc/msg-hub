@@ -31,7 +31,11 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { color: var(--err); }
   button.link { background: none; border: none; color: var(--accent); padding: 2px 6px; }
-  .tabs { display: flex; gap: 6px; }
+  button.add {
+    width: 26px; height: 26px; padding: 0; font-size: 16px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--accent); border-color: var(--accent);
+  }
   .warn {
     color: var(--warn); border: 1px solid var(--warn); border-radius: 6px;
     padding: 3px 10px; font-size: 12px;
@@ -39,47 +43,57 @@
   .stats { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 20px 0; }
   .stat {
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 14px; min-width: 118px;
+    padding: 8px 12px; min-width: 92px;
   }
-  .stat .n { font-size: 20px; font-weight: 600; }
+  .stat .n { font-size: 18px; font-weight: 600; }
   .stat .k { color: var(--muted); font-size: 12px; }
   .stat .n.ok { color: var(--ok); } .stat .n.err { color: var(--err); }
   .stat .n.warn { color: var(--warn); } .stat .n.off { color: var(--off); }
-  main { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px 20px 28px; align-items: start; }
-  main.wide { grid-template-columns: 1fr; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  /* ── 三栏 ───────────────────────────────────────── */
+  .tri { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; padding: 14px 20px 0; align-items: start; }
+  @media (max-width: 1100px) { .tri { grid-template-columns: 1fr; } }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .panel-head {
-    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px;
     border-bottom: 1px solid var(--line);
   }
   .panel-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
   .muted { color: var(--muted); font-size: 12px; }
-  ul { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow: auto; }
-  li.chan { border-bottom: 1px solid var(--line); padding: 9px 14px; cursor: pointer; }
-  li.chan:last-child { border-bottom: none; }
-  li.chan:hover { background: var(--panel-2); }
-  li.chan.sel { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
-  .row { display: flex; align-items: center; gap: 8px; }
-  .row.wrap { flex-wrap: wrap; }
-  .name { font-weight: 500; }
+  .list { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow: auto; }
+  li.item { border-bottom: 1px solid var(--line); padding: 8px 12px; cursor: pointer; }
+  li.item:last-child { border-bottom: none; }
+  li.item:hover { background: var(--panel-2); }
+  .row { display: flex; align-items: center; gap: 7px; }
+  .row.sub { margin-top: 3px; flex-wrap: wrap; }
+  .name { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .dot.ok { background: var(--ok); } .dot.disabled { background: var(--off); }
   .dot.broken { background: var(--err); }
-  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
-  .tag.hl { color: var(--accent); border-color: var(--accent); }
-  .body { padding: 12px 14px; }
+  .tag {
+    font-size: 11px; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 4px; padding: 0 5px; white-space: nowrap;
+  }
+  .tag.hl { color: var(--accent); border-color: rgba(76,141,255,.5); }
+  .tag.warn { color: var(--warn); border-color: rgba(210,153,34,.5); }
+  .cond { font-size: 12px; color: var(--muted); }
+  .cond b { color: var(--fg); font-weight: 500; }
+  .arrow { color: var(--off); }
+  .empty { padding: 16px 12px; color: var(--muted); font-size: 12px; }
+
+  /* ── 日志 ───────────────────────────────────────── */
+  .logs { padding: 14px 20px 28px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; position: sticky; top: 0; background: var(--panel); }
-  .table-wrap { overflow: auto; max-height: 56vh; }
-  .pill { font-size: 11px; border-radius: 10px; padding: 1px 8px; border: 1px solid var(--line); }
+  .table-wrap { overflow: auto; max-height: 42vh; }
+  .pill { font-size: 11px; border-radius: 10px; padding: 1px 8px; border: 1px solid var(--line); white-space: nowrap; }
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.err { color: var(--err); border-color: var(--err); }
   .pill.dry { color: var(--accent); border-color: var(--accent); }
   .pill.warn { color: var(--warn); border-color: var(--warn); }
-  pre { margin: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
-        padding: 8px 10px; overflow: auto; font-size: 12px; }
+
+  /* ── 弹窗 ───────────────────────────────────────── */
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex;
            align-items: center; justify-content: center; z-index: 20; padding: 20px; }
   .modal .card {
@@ -88,7 +102,11 @@
   }
   .modal .card > h3 { margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
   .modal .content { padding: 14px 16px; overflow: auto; }
-  .modal .foot { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .modal .foot {
+    padding: 12px 16px; border-top: 1px solid var(--line);
+    display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+  }
+  .modal .foot .left { margin-right: auto; }
   label { display: block; margin-bottom: 12px; }
   label .lb { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   label .lb b { color: var(--err); font-weight: 500; }
@@ -96,26 +114,26 @@
     width: 100%; font: inherit; color: var(--fg); background: var(--bg);
     border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px;
   }
+  input:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
   textarea { min-height: 70px; resize: vertical; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
   .err-msg { color: var(--err); font-size: 12px; margin-bottom: 10px; }
   .hidden { display: none !important; }
-  .switch { position: relative; width: 34px; height: 18px; flex: none; display: inline-block; vertical-align: middle; }
+  .switch { position: relative; width: 34px; height: 18px; flex: none; display: inline-block; }
   .switch input { opacity: 0; width: 0; height: 0; }
   .switch span { position: absolute; inset: 0; background: var(--off); border-radius: 9px; cursor: pointer; transition: .15s; }
-  .switch span::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
-                         background: #fff; border-radius: 50%; transition: .15s; }
+  .switch span::before {
+    content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px;
+    background: #fff; border-radius: 50%; transition: .15s;
+  }
   .switch input:checked + span { background: var(--ok); }
   .switch input:checked + span::before { transform: translateX(16px); }
   .sec { color: var(--muted); font-size: 12px; margin: 16px 0 8px; border-top: 1px solid var(--line); padding-top: 12px; }
-  .cond { font-size: 12px; }
-  .cond code { color: var(--accent); }
-  .banner {
-    margin: 0 20px; padding: 10px 14px; border: 1px solid var(--warn); color: var(--warn);
-    border-radius: 8px; font-size: 13px; background: rgba(210,153,34,.07);
-  }
   .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  pre { margin: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+        padding: 8px 10px; overflow: auto; font-size: 12px; }
+  .checkline { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .checkline label { margin: 0; }
 </style>
 </head>
 <body>
@@ -123,32 +141,57 @@
   <div class="brand">msg-hub<span class="sub">入口 → 路由 → 出口</span></div>
   <span id="auth-note" class="warn hidden"></span>
   <div class="grow"></div>
-  <div class="tabs">
-    <button id="btn-tab-channels" class="primary">出口</button>
-    <button id="btn-tab-entries">入口</button>
-    <button id="btn-tab-rules">路由</button>
-  </div>
   <button id="btn-refresh">刷新</button>
-  <button id="btn-add" class="primary">添加出口</button>
 </header>
 
 <section id="stats" class="stats"></section>
-<div id="rules-banner" class="banner hidden" style="margin-top:14px"></div>
 
-<main id="view-channels">
-  <aside class="panel">
-    <div class="panel-head"><h2>出口</h2><span id="channel-count" class="muted"></span></div>
-    <ul id="channel-list"></ul>
-  </aside>
-
+<div class="tri">
+  <!-- 入口 -->
   <section class="panel">
     <div class="panel-head">
-      <h2 id="detail-title">发送日志</h2>
-      <span id="detail-sub" class="muted"></span>
+      <h2>入口</h2>
+      <span class="muted" id="cnt-entries"></span>
       <span class="grow"></span>
-      <button id="btn-all-logs" class="link hidden">看全部出口</button>
+      <button class="add" id="add-entry" title="新增入口">＋</button>
     </div>
-    <div id="detail" class="body hidden"></div>
+    <ul class="list" id="list-entries"></ul>
+  </section>
+
+  <!-- 路由 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>路由</h2>
+      <span class="muted" id="cnt-rules"></span>
+      <span class="grow"></span>
+      <button class="link" id="btn-preview">预览</button>
+      <button class="add" id="add-rule" title="新建规则">＋</button>
+    </div>
+    <ul class="list" id="list-rules"></ul>
+  </section>
+
+  <!-- 出口 -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>出口</h2>
+      <span class="muted" id="cnt-channels"></span>
+      <span class="grow"></span>
+      <button class="add" id="add-channel" title="添加出口">＋</button>
+    </div>
+    <ul class="list" id="list-channels"></ul>
+  </section>
+</div>
+
+<section class="logs">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>发送日志</h2>
+      <span class="muted" id="log-sub"></span>
+      <span class="grow"></span>
+      <select id="log-filter" style="width:auto;min-width:160px">
+        <option value="">全部出口</option>
+      </select>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -158,96 +201,42 @@
         <tbody id="logs"></tbody>
       </table>
     </div>
-  </section>
-</main>
-
-<main id="view-entries" class="hidden wide">
-  <section class="panel">
-    <div class="panel-head">
-      <h2>入口</h2>
-      <span class="muted">持 token 的调用方；<b>只能发消息，不能指定出口</b>。标签决定能命中哪些路由规则</span>
-      <span class="grow"></span>
-      <button id="btn-new-entry" class="primary">新增入口</button>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>#</th><th>名称</th><th>标签</th><th>Token 前缀</th><th>状态</th>
-          <th>创建时间</th><th>最后使用</th><th>次数</th><th>操作</th>
-        </tr></thead>
-        <tbody id="entry-rows"></tbody>
-      </table>
-    </div>
-  </section>
-</main>
-
-<main id="view-rules" class="hidden wide">
-  <section class="panel">
-    <div class="panel-head">
-      <h2>路由规则</h2>
-      <span class="muted">一条规则 = 一个入口条件 + 一个出口条件；命中的规则累加取并集去重</span>
-      <span class="grow"></span>
-      <button id="btn-preview" class="primary">路由预览</button>
-      <button id="btn-new-rule" class="primary">新建规则</button>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>#</th><th>名称</th><th>入口条件</th><th>出口条件</th><th>状态</th><th>操作</th>
-        </tr></thead>
-        <tbody id="rule-rows"></tbody>
-      </table>
-    </div>
-  </section>
-</main>
-
-<!-- 添加 / 编辑出口 -->
-<div id="modal" class="modal hidden">
-  <div class="card">
-    <h3 id="modal-title">添加出口</h3>
-    <div class="content">
-      <div id="form-err" class="err-msg hidden"></div>
-      <label><span class="lb">出口类型</span><select id="f-type"></select></label>
-      <label><span class="lb">出口名称 <b>*</b></span><input type="text" id="f-name" placeholder="如：运维告警群"></label>
-      <label><span class="lb">标签</span><input type="text" id="f-tags" placeholder="逗号分隔，如 kind:alert,team:ops">
-        <div class="hint">路由规则靠标签匹配，建议 <code>key:value</code> 形式；支持 exact/contains/prefix/suffix</div></label>
-      <div id="f-settings"></div>
-      <div class="sec">护栏（跨类型通用）</div>
-      <label class="row"><span class="switch"><input type="checkbox" id="f-allow-all"><span></span></span>
-        <span style="margin-left:8px">允许 @所有人（默认禁止）</span></label>
-      <label><span class="lb">每分钟发送上限</span><input type="number" id="f-rate" value="30" min="0"></label>
-    </div>
-    <div class="foot">
-      <button id="btn-cancel">取消</button>
-      <button id="btn-submit" class="primary">创建</button>
-    </div>
   </div>
-</div>
+</section>
 
-<!-- 入口新建 / token 展示 -->
+<!-- ── 入口弹窗 ───────────────────────────────────── -->
 <div id="entry-modal" class="modal hidden">
   <div class="card">
-    <h3>新增入口</h3>
+    <h3 id="entry-title">新增入口</h3>
     <div class="content">
       <div id="entry-err" class="err-msg hidden"></div>
-      <label><span class="lb">入口名称 <b>*</b></span><input type="text" id="e-name" placeholder="如：pibox-alert"></label>
+      <label><span class="lb">名称 <b>*</b></span><input type="text" id="e-name" placeholder="如：pibox-alert"></label>
       <label><span class="lb">标签</span><input type="text" id="e-tags" placeholder="逗号分隔，如 app:pibox,kind:alert">
         <div class="hint">规则靠这些标签决定这把 token 能发到哪些出口</div></label>
+      <div id="e-prefix-box" class="hidden">
+        <div class="sec">凭据</div>
+        <div class="muted">token 前缀：<code id="e-prefix"></code>（明文只在创建时显示一次，无法查看）</div>
+      </div>
+      <label class="checkline" id="e-enabled-box" style="margin-top:12px">
+        <span class="switch"><input type="checkbox" id="e-enabled" checked><span></span></span>
+        <span>启用</span>
+      </label>
     </div>
     <div class="foot">
-      <button id="btn-entry-cancel">取消</button>
-      <button id="btn-entry-submit" class="primary">生成 Token</button>
+      <button class="link danger left hidden" id="e-delete">删除入口</button>
+      <button id="e-cancel">取消</button>
+      <button id="e-submit" class="primary">保存</button>
     </div>
   </div>
 </div>
 
-<!-- 规则新建 / 编辑 -->
+<!-- ── 路由弹窗 ───────────────────────────────────── -->
 <div id="rule-modal" class="modal hidden">
   <div class="card">
-    <h3 id="rule-modal-title">新建路由规则</h3>
+    <h3 id="rule-title">新建规则</h3>
     <div class="content">
       <div id="rule-err" class="err-msg hidden"></div>
-      <label><span class="lb">规则名称 <b>*</b></span><input type="text" id="r-name" placeholder="如：pibox 的告警 → 运维群"></label>
+      <label><span class="lb">名称 <b>*</b></span><input type="text" id="r-name" placeholder="如：pibox 的告警 → 运维群"></label>
 
       <div class="sec">第一段：入口条件（决定「谁发来的」算命中）</div>
       <div class="three">
@@ -266,7 +255,7 @@
           </select></label>
         <label><span class="lb">匹配值</span><input type="text" id="r-entry-value" placeholder="如 app:pibox"></label>
       </div>
-      <div class="hint" style="margin:-6px 0 10px">留「（所有入口）」表示不限制来源</div>
+      <div class="hint" style="margin:-6px 0 10px">选「（所有入口）」表示不限制来源</div>
 
       <div class="sec">第二段：出口条件（决定「发给谁」）</div>
       <div class="three">
@@ -285,16 +274,57 @@
           </select></label>
         <label><span class="lb">匹配值 <b>*</b></span><input type="text" id="r-outbound-value" placeholder="如 kind:alert"></label>
       </div>
-      <div class="hint" style="margin:-6px 0 0">想发给多个出口时，再建一条规则即可——规则之间是累加关系</div>
+      <div class="hint" style="margin:-6px 0 0">想发给多个出口就再建一条规则——规则之间是累加关系</div>
+
+      <label class="checkline" id="r-enabled-box" style="margin-top:12px">
+        <span class="switch"><input type="checkbox" id="r-enabled" checked><span></span></span>
+        <span>启用</span>
+      </label>
     </div>
     <div class="foot">
-      <button id="btn-rule-cancel">取消</button>
-      <button id="btn-rule-submit" class="primary">保存</button>
+      <button class="link danger left hidden" id="r-delete">删除规则</button>
+      <button id="r-cancel">取消</button>
+      <button id="r-submit" class="primary">保存</button>
     </div>
   </div>
 </div>
 
-<!-- 路由预览 -->
+<!-- ── 出口弹窗 ───────────────────────────────────── -->
+<div id="channel-modal" class="modal hidden">
+  <div class="card">
+    <h3 id="channel-title">添加出口</h3>
+    <div class="content">
+      <div id="channel-err" class="err-msg hidden"></div>
+      <label><span class="lb">类型</span><select id="c-type"></select></label>
+      <label><span class="lb">名称 <b>*</b></span><input type="text" id="c-name" placeholder="如：运维告警群"></label>
+      <label><span class="lb">标签</span><input type="text" id="c-tags" placeholder="逗号分隔，如 kind:alert,team:ops">
+        <div class="hint">路由规则靠标签匹配，建议 <code>key:value</code> 形式</div></label>
+
+      <label class="checkline hidden" id="c-rewrite-box">
+        <input type="checkbox" id="c-rewrite" style="width:auto">
+        <span>重新填写凭据</span>
+      </label>
+      <div id="c-settings"></div>
+
+      <div class="sec">护栏（跨类型通用）</div>
+      <label class="checkline"><span class="switch"><input type="checkbox" id="c-allow-all"><span></span></span>
+        <span>允许 @所有人（默认禁止）</span></label>
+      <label><span class="lb">每分钟发送上限</span><input type="number" id="c-rate" value="30" min="0"></label>
+
+      <label class="checkline" id="c-enabled-box" style="margin-top:4px">
+        <span class="switch"><input type="checkbox" id="c-enabled" checked><span></span></span>
+        <span>启用</span>
+      </label>
+    </div>
+    <div class="foot">
+      <button class="link danger left hidden" id="c-delete">删除出口</button>
+      <button id="c-cancel">取消</button>
+      <button id="c-submit" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 路由预览 ───────────────────────────────────── -->
 <div id="preview-modal" class="modal hidden">
   <div class="card" style="width:760px">
     <h3>路由预览（不发送）</h3>
@@ -303,12 +333,12 @@
       <div id="p-result"></div>
     </div>
     <div class="foot">
-      <button id="btn-preview-close" class="primary">关闭</button>
+      <button id="p-close" class="primary">关闭</button>
     </div>
   </div>
 </div>
 
-<!-- 明文 token（只显示一次）-->
+<!-- ── 明文 token ─────────────────────────────────── -->
 <div id="secret-modal" class="modal hidden">
   <div class="card">
     <h3>Token 已生成 · <span id="secret-name"></span></h3>
@@ -323,8 +353,8 @@
       </div>
     </div>
     <div class="foot">
-      <button id="btn-secret-copy">复制</button>
-      <button id="btn-secret-close" class="primary">我已保存</button>
+      <button id="secret-copy">复制</button>
+      <button id="secret-close" class="primary">我已保存</button>
     </div>
   </div>
 </div>
@@ -335,13 +365,11 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 let CHANNELS = [];
-let TYPES = [];
-let LOGS = [];
 let ENTRIES = [];
 let RULES = [];
-let SELECTED = null;      // 当前选中的出口 id
-let VIEW = "channels";
-let EDIT_RULE = null;     // 正在编辑的规则 id（null = 新建）
+let TYPES = [];
+let LOGS = [];
+let LOG_FILTER = "";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -372,63 +400,127 @@ const toast = (message, isError) => {
   setTimeout(() => node.remove(), 3200);
 };
 
-const tagList = (tags, cls = "") => (tags || []).map((t) =>
-  `<span class="tag ${cls}">${esc(t)}</span>`).join(" ") || `<span class="muted">—</span>`;
-
+const tagList = (tags, cls = "") => (tags || []).length
+  ? (tags || []).map((t) => `<span class="tag ${cls}">${esc(t)}</span>`).join(" ")
+  : "";
 const parseTags = (value) => String(value || "")
   .split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+const show = (id) => $(id).classList.remove("hidden");
+const hide = (id) => $(id).classList.add("hidden");
+const MODALS = ["entry-modal", "rule-modal", "channel-modal", "preview-modal", "secret-modal"];
+const closeAll = () => MODALS.forEach(hide);
 
 // ── 统计 ────────────────────────────────────────────────
 function renderStats(stats) {
   const c = stats.channels, s = stats.sends;
-  const topology = stats.topology || {};
   const rate = s.sampled ? Math.round((s.ok / s.sampled) * 100) : 0;
   $("stats").innerHTML = [
-    ["出口总数", c.total, ""],
+    ["入口", ENTRIES.length, ""],
+    ["规则", RULES.length, RULES.some((r) => r.enabled) ? "" : "warn"],
+    ["出口", c.total, ""],
     ["可用", c.ok, "ok"],
     ["已停用", c.disabled, "off"],
     ["损坏", c.broken, "err"],
-    ["入口", (topology.entries || []).length, ""],
-    ["规则", (topology.rules || []).length, ""],
     ["成功率", s.sampled ? rate + "%" : "—", ""],
   ].map(([k, n, cls]) =>
     `<div class="stat"><div class="n ${cls}">${esc(n)}</div><div class="k">${esc(k)}</div></div>`
   ).join("");
 }
 
-// ── 出口 ────────────────────────────────────────────────
-function renderChannels() {
-  $("channel-count").textContent = CHANNELS.length + " 个";
-  $("channel-list").innerHTML = CHANNELS.map((ch) => `
-    <li class="chan ${SELECTED === ch.id ? "sel" : ""}" data-id="${ch.id}">
-      <div class="row">
-        <span class="dot ${ch.status}"></span>
-        <span class="name">${esc(ch.name)}</span>
-        <span class="grow"></span>
-        <span class="tag">${esc(ch.type)}</span>
-      </div>
-      <div class="row" style="margin-top:4px">
-        <span class="muted">#${ch.id}</span>
-        <span class="grow"></span>
-        <span class="muted">${ch.status === "broken" ? esc(ch.status_detail || "配置损坏")
-          : ch.enabled ? "已启用" : "已停用"}</span>
-        <label class="switch" title="启用/停用">
-          <input type="checkbox" data-toggle="${ch.id}" ${ch.enabled ? "checked" : ""}>
-          <span></span>
-        </label>
-        <button class="link danger" data-del="${ch.id}">删除</button>
-      </div>
-      <div class="row wrap" style="margin-top:4px">${tagList(ch.tags)}</div>
-    </li>`).join("") || `<li class="muted" style="padding:14px">还没有出口，点右上角「添加出口」</li>`;
+// ── 三栏列表 ────────────────────────────────────────────
+const FIELD_LABEL = { entry: "入口", tag: "标签", name: "名称", type: "类型" };
+const OP_SIGN = { exact: "＝", contains: "包含", prefix: "前缀", suffix: "后缀" };
+
+function condText(cond, side) {
+  if (!cond) return `<span class="tag">所有入口</span>`;
+  const field = FIELD_LABEL[cond.field] || cond.field;
+  return `<span class="cond">${esc(field)}${esc(OP_SIGN[cond.op] || cond.op)}
+    <b>${esc(cond.value)}</b></span>`;
 }
 
+function renderEntries() {
+  $("cnt-entries").textContent = ENTRIES.length;
+  $("list-entries").innerHTML = ENTRIES.map((e) => `
+    <li class="item" data-entry="${e.id}">
+      <div class="row">
+        <span class="dot ${e.enabled ? "ok" : "disabled"}"></span>
+        <span class="name">${esc(e.name)}</span>
+        <span class="grow"></span>
+        <label class="switch" title="启用/禁用">
+          <input type="checkbox" data-entry-toggle="${e.id}" ${e.enabled ? "checked" : ""}>
+          <span></span>
+        </label>
+      </div>
+      <div class="row sub">
+        <code class="muted">${esc(e.prefix)}…</code>
+        ${tagList(e.tags, "hl")}
+        <span class="grow"></span>
+        <span class="muted">${e.usage_count || 0} 次</span>
+      </div>
+    </li>`).join("") || `<li class="empty">还没有入口，点右上角 ＋</li>`;
+}
+
+function renderRules() {
+  $("cnt-rules").textContent = RULES.length;
+  $("list-rules").innerHTML = RULES.map((r) => `
+    <li class="item" data-rule="${r.id}">
+      <div class="row">
+        <span class="dot ${r.enabled ? "ok" : "disabled"}"></span>
+        <span class="name">${esc(r.name)}</span>
+        <span class="grow"></span>
+        <label class="switch" title="启用/停用">
+          <input type="checkbox" data-rule-toggle="${r.id}" ${r.enabled ? "checked" : ""}>
+          <span></span>
+        </label>
+      </div>
+      <div class="row sub">
+        ${condText(r.entry, "entry")}
+        <span class="arrow">→</span>
+        ${condText(r.outbound, "outbound")}
+      </div>
+    </li>`).join("") || `<li class="empty">还没有路由规则——现在任何入口都发不出消息</li>`;
+}
+
+function renderChannels() {
+  $("cnt-channels").textContent = CHANNELS.length;
+  $("list-channels").innerHTML = CHANNELS.map((c) => `
+    <li class="item" data-channel="${c.id}">
+      <div class="row">
+        <span class="dot ${c.status}"></span>
+        <span class="name">${esc(c.name)}</span>
+        <span class="grow"></span>
+        <label class="switch" title="启用/停用">
+          <input type="checkbox" data-channel-toggle="${c.id}" ${c.enabled ? "checked" : ""}>
+          <span></span>
+        </label>
+      </div>
+      <div class="row sub">
+        <span class="tag">${esc(c.type)}</span>
+        ${tagList(c.tags)}
+        ${c.status === "broken" ? `<span class="tag warn">配置损坏</span>` : ""}
+      </div>
+    </li>`).join("") || `<li class="empty">还没有出口，点右上角 ＋</li>`;
+
+  // 日志过滤下拉
+  const select = $("log-filter");
+  const current = LOG_FILTER;
+  select.innerHTML = `<option value="">全部出口</option>` + CHANNELS.map((c) =>
+    `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  select.value = current;
+}
+
+// ── 日志 ────────────────────────────────────────────────
 function actorLabel(actor) {
   if (!actor) return `<span class="muted">—</span>`;
   if (actor.type === "admin") return `<span class="tag">管理员</span>`;
   return `<span class="tag" title="entry #${esc(actor.id)} ${esc(actor.prefix || "")}">${esc(actor.name || "entry")}</span>`;
 }
 
-function renderLogs(records) {
+function renderLogs() {
+  const records = LOG_FILTER === ""
+    ? LOGS
+    : LOGS.filter((r) => String((r.channel || {}).id) === String(LOG_FILTER));
+  $("log-sub").textContent = `最近 ${records.length} 条`;
   $("logs").innerHTML = records.map((r) => {
     const info = r.channel || {};
     const outcome = r.outcome || (r.ok ? "sent" : "failed");
@@ -450,71 +542,290 @@ function renderLogs(records) {
   }).join("") || `<tr><td colspan="9" class="muted" style="padding:14px">还没有发送记录</td></tr>`;
 }
 
-// ── 入口 ────────────────────────────────────────────────
-function renderEntries() {
-  $("entry-rows").innerHTML = ENTRIES.map((e) => `
-    <tr>
-      <td class="muted">${e.id}</td>
-      <td><span class="name">${esc(e.name)}</span></td>
-      <td>${tagList(e.tags)}</td>
-      <td><code class="muted">${esc(e.prefix)}…</code></td>
-      <td>${e.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill err">已禁用</span>'}</td>
-      <td class="muted">${esc((e.created_at || "").replace("T", " ").slice(0, 19))}</td>
-      <td class="muted">${esc((e.last_used_at || "—").replace("T", " ").slice(0, 19))}</td>
-      <td class="muted">${e.usage_count || 0}</td>
-      <td>
-        <label class="switch" title="启用/禁用">
-          <input type="checkbox" data-entry-toggle="${e.id}" ${e.enabled ? "checked" : ""}>
-          <span></span>
-        </label>
-        <button class="link" data-entry-tags="${e.id}" data-name="${esc(e.name)}">改标签</button>
-        <button class="link" data-entry-rename="${e.id}" data-name="${esc(e.name)}">重命名</button>
-        <button class="link danger" data-entry-del="${e.id}" data-name="${esc(e.name)}">删除</button>
-      </td>
-    </tr>`).join("") || `<tr><td colspan="9" class="muted" style="padding:14px">还没有入口，点右上角「新增入口」</td></tr>`;
-}
-
-// ── 规则 ────────────────────────────────────────────────
-const FIELD_LABEL = { entry: "入口", tag: "标签", name: "名称", type: "类型" };
-const OP_LABEL = { exact: "=", contains: "包含", prefix: "前缀", suffix: "后缀" };
-const OP_SIGN = { exact: "==", contains: "∋", prefix: "以", suffix: "结尾" };
-
-function condText(cond) {
-  if (!cond) return `<span class="muted">（所有入口）</span>`;
-  return `<span class="cond"><code>${esc(FIELD_LABEL[cond.field] || cond.field)}</code>
-    ${esc(OP_SIGN[cond.op] || cond.op)}
-    <code>${esc(cond.value)}</code></span>`;
-}
-
-function renderRules() {
-  $("rule-rows").innerHTML = RULES.map((r) => `
-    <tr>
-      <td class="muted">${r.id}</td>
-      <td><span class="name">${esc(r.name)}</span></td>
-      <td>${condText(r.entry)}</td>
-      <td>${condText(r.outbound)}</td>
-      <td>${r.enabled ? '<span class="pill ok">启用</span>' : '<span class="pill err">已停用</span>'}</td>
-      <td>
-        <label class="switch" title="启用/停用">
-          <input type="checkbox" data-rule-toggle="${r.id}" ${r.enabled ? "checked" : ""}>
-          <span></span>
-        </label>
-        <button class="link" data-rule-edit="${r.id}">编辑</button>
-        <button class="link danger" data-rule-del="${r.id}" data-name="${esc(r.name)}">删除</button>
-      </td>
-    </tr>`).join("") || `<tr><td colspan="6" class="muted" style="padding:14px">还没有路由规则——现在任何入口都发不出消息</td></tr>`;
-
-  const banner = $("rules-banner");
-  if (!RULES.length) {
-    banner.classList.remove("hidden");
-    banner.innerHTML = "⚠️ <b>当前没有任何路由规则</b>：入口发出的消息会全部失败（<code>no_route</code>）。"
-      + "至少建一条规则（入口条件可留空表示所有入口）。";
-  } else if (!RULES.some((r) => r.enabled)) {
-    banner.classList.remove("hidden");
-    banner.innerHTML = "⚠️ <b>全部规则已停用</b>：入口发出的消息仍会失败。";
-  } else {
-    banner.classList.add("hidden");
+// ── 加载 ────────────────────────────────────────────────
+async function refresh() {
+  try {
+    const [health, stats, logs, entries, rules, channels] = await Promise.all([
+      api("/health"), api("/api/stats"), api("/api/logs?limit=500"),
+      api("/api/entries"), api("/api/rules"), api("/api/channels"),
+    ]);
+    if (health.auth === "none") {
+      show("auth-note");
+      $("auth-note").textContent = "未设置管理员密码：当前无鉴权，仅限本机调试";
+    } else {
+      hide("auth-note");
+    }
+    ENTRIES = entries.entries || [];
+    RULES = rules.rules || [];
+    CHANNELS = channels.channels || [];
+    LOGS = logs.logs || [];
+    renderStats(stats);
+    renderEntries();
+    renderRules();
+    renderChannels();
+    renderLogs();
+  } catch (err) {
+    toast(err.message || "加载失败", true);
   }
+}
+
+// ── 入口弹窗 ────────────────────────────────────────────
+let EDIT_ENTRY = null;
+
+function openEntryModal(entry) {
+  EDIT_ENTRY = entry ? entry.id : null;
+  $("entry-title").textContent = entry ? "编辑入口" : "新增入口";
+  $("e-name").value = entry ? entry.name : "";
+  $("e-tags").value = entry ? (entry.tags || []).join(",") : "";
+  $("e-enabled").checked = entry ? entry.enabled : true;
+  $("e-prefix").textContent = entry ? entry.prefix + "…" : "";
+  $("e-prefix-box").classList.toggle("hidden", !entry);
+  $("e-enabled-box").classList.toggle("hidden", !entry);
+  $("e-delete").classList.toggle("hidden", !entry);
+  $("e-submit").textContent = entry ? "保存" : "生成 Token";
+  $("entry-err").classList.add("hidden");
+  show("entry-modal");
+}
+
+async function submitEntry() {
+  const errBox = $("entry-err");
+  errBox.classList.add("hidden");
+  const name = $("e-name").value.trim();
+  if (!name) { errBox.textContent = "名称不能为空"; errBox.classList.remove("hidden"); return; }
+  const payload = { name, tags: parseTags($("e-tags").value) };
+  try {
+    if (EDIT_ENTRY == null) {
+      const data = await api("/api/entries", { method: "POST", body: JSON.stringify(payload) });
+      hide("entry-modal");
+      showSecret(data.entry);
+    } else {
+      payload.enabled = $("e-enabled").checked;
+      await api("/api/entries/" + EDIT_ENTRY, { method: "PATCH", body: JSON.stringify(payload) });
+      hide("entry-modal");
+      toast("已保存");
+    }
+    await refresh();
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+// ── 路由弹窗 ────────────────────────────────────────────
+let EDIT_RULE = null;
+
+function syncCondEnabled() {
+  const off = $("r-entry-field").value === "";
+  $("r-entry-op").disabled = off;
+  $("r-entry-value").disabled = off;
+}
+
+function openRuleModal(rule) {
+  EDIT_RULE = rule ? rule.id : null;
+  $("rule-title").textContent = rule ? "编辑规则" : "新建规则";
+  $("r-name").value = rule ? rule.name : "";
+  const entry = rule && rule.entry;
+  $("r-entry-field").value = entry ? entry.field : "";
+  $("r-entry-op").value = entry ? entry.op : "exact";
+  $("r-entry-value").value = entry ? entry.value : "";
+  $("r-outbound-field").value = rule ? rule.outbound.field : "tag";
+  $("r-outbound-op").value = rule ? rule.outbound.op : "exact";
+  $("r-outbound-value").value = rule ? rule.outbound.value : "";
+  $("r-enabled").checked = rule ? rule.enabled : true;
+  $("r-enabled-box").classList.toggle("hidden", !rule);
+  $("r-delete").classList.toggle("hidden", !rule);
+  $("rule-err").classList.add("hidden");
+  syncCondEnabled();
+  show("rule-modal");
+}
+
+async function submitRule() {
+  const errBox = $("rule-err");
+  errBox.classList.add("hidden");
+  const name = $("r-name").value.trim();
+  if (!name) { errBox.textContent = "名称不能为空"; errBox.classList.remove("hidden"); return; }
+  const outValue = $("r-outbound-value").value.trim();
+  if (!outValue) { errBox.textContent = "出口条件的匹配值不能为空"; errBox.classList.remove("hidden"); return; }
+  const entryField = $("r-entry-field").value;
+  const entryValue = $("r-entry-value").value.trim();
+  if (entryField && !entryValue) {
+    errBox.textContent = "选了入口筛选方式就要填匹配值（不限制就选「所有入口」）";
+    errBox.classList.remove("hidden");
+    return;
+  }
+  const payload = {
+    name,
+    outbound: { field: $("r-outbound-field").value, op: $("r-outbound-op").value, value: outValue },
+  };
+  if (entryField) payload.entry = { field: entryField, op: $("r-entry-op").value, value: entryValue };
+  try {
+    if (EDIT_RULE == null) {
+      await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
+      toast("规则已创建");
+    } else {
+      payload.clear_entry = !entryField;
+      payload.enabled = $("r-enabled").checked;
+      await api("/api/rules/" + EDIT_RULE, { method: "PATCH", body: JSON.stringify(payload) });
+      toast("已保存");
+    }
+    hide("rule-modal");
+    await refresh();
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+// ── 出口弹窗 ────────────────────────────────────────────
+let EDIT_CHANNEL = null;
+
+function fieldFor(name, prop, required, editing) {
+  const desc = prop.description ? `<div class="hint">${esc(prop.description)}</div>` : "";
+  const requiredMark = required ? " <b>*</b>" : "";
+  let control = "";
+  const placeholderAttr = prop.secret ? ` placeholder="留空保持不变"` : "";
+  if (prop.enum) {
+    control = `<select data-f="${esc(name)}" data-kind="string">
+      ${prop.enum.map((v) => `<option value="${esc(v)}" ${prop.default === v ? "selected" : ""}>${esc(v)}</option>`).join("")}
+    </select>`;
+  } else if (prop.type === "boolean") {
+    control = `<label class="checkline"><span class="switch"><input type="checkbox" data-f="${esc(name)}" data-kind="bool" ${prop.default ? "checked" : ""}><span></span></span></label>`;
+  } else if (prop.type === "array") {
+    control = `<input type="text" data-f="${esc(name)}" data-kind="array" placeholder="多个值用逗号分隔">`;
+  } else if (prop.type === "integer" || prop.type === "number") {
+    control = `<input type="number" data-f="${esc(name)}" data-kind="number" value="${esc(prop.default ?? "")}">`;
+  } else if (prop.type === "object") {
+    control = `<textarea data-f="${esc(name)}" data-kind="json"></textarea>`;
+  } else if (prop.secret) {
+    control = `<input type="password" data-f="${esc(name)}" data-kind="string"${placeholderAttr}>`;
+  } else {
+    control = `<input type="text" data-f="${esc(name)}" data-kind="string" value="${esc(prop.default ?? "")}">`;
+  }
+  return `<label><span class="lb">${esc(prop.title || name)}${requiredMark}</span>${control}${desc}</label>`;
+}
+
+function renderSettingsForm(type) {
+  const schema = (type && type.settings_schema) || {};
+  const required = schema.required || [];
+  const props = schema.properties || {};
+  $("c-settings").innerHTML = Object.keys(props).map((name) =>
+    fieldFor(name, props[name] || {}, required.includes(name))).join("");
+}
+
+function collectSettings() {
+  const settings = {};
+  $("c-settings").querySelectorAll("[data-f]").forEach((el) => {
+    const name = el.dataset.f, kind = el.dataset.kind;
+    if (kind === "bool") { settings[name] = el.checked; return; }
+    let value = el.value;
+    if (value === "" || value == null) return;
+    if (kind === "number") value = Number(value);
+    else if (kind === "array") value = value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    else if (kind === "json") { try { value = JSON.parse(value); } catch (_) { return; } }
+    settings[name] = value;
+  });
+  return settings;
+}
+
+async function openChannelModal(channel) {
+  if (!TYPES.length) {
+    try { TYPES = (await api("/api/types")).types; } catch (err) { toast(err.message, true); }
+  }
+  EDIT_CHANNEL = channel ? channel.id : null;
+  const editing = Boolean(channel);
+  $("channel-title").textContent = editing ? "编辑出口" : "添加出口";
+  $("c-type").innerHTML = TYPES.map((t) =>
+    `<option value="${esc(t.type)}">${esc(t.name)}（${esc(t.type)}）</option>`).join("");
+  $("c-type").value = editing ? channel.type : (TYPES[0] || {}).type;
+  $("c-type").disabled = editing;   // 换类型必须同时给完整 settings，走「重新填写凭据」
+  $("c-type").onchange = () => renderSettingsForm(TYPES.find((t) => t.type === $("c-type").value));
+  $("c-name").value = editing ? channel.name : "";
+  $("c-tags").value = editing ? (channel.tags || []).join(",") : "";
+  $("c-allow-all").checked = editing ? Boolean((channel.options || {}).allow_mention_all) : false;
+  $("c-rate").value = editing ? ((channel.options || {}).rate_limit_per_min ?? 30) : 30;
+  $("c-enabled").checked = editing ? channel.enabled : true;
+  $("c-enabled-box").classList.toggle("hidden", !editing);
+  $("c-delete").classList.toggle("hidden", !editing);
+  $("c-rewrite-box").classList.toggle("hidden", !editing);
+  $("c-rewrite").checked = !editing;
+
+  const type = TYPES.find((t) => t.type === $("c-type").value);
+  renderSettingsForm(type);
+  $("c-settings").classList.toggle("hidden", editing);
+  $("channel-err").classList.add("hidden");
+  show("channel-modal");
+}
+
+async function submitChannel() {
+  const errBox = $("channel-err");
+  errBox.classList.add("hidden");
+  const editing = EDIT_CHANNEL != null;
+  const name = $("c-name").value.trim();
+  if (!name) { errBox.textContent = "名称不能为空"; errBox.classList.remove("hidden"); return; }
+
+  const options = { rate_limit_per_min: Number($("c-rate").value) || 0 };
+  if ($("c-allow-all").checked) options.allow_mention_all = true;
+  const payload = {
+    name,
+    tags: parseTags($("c-tags").value),
+    options,
+  };
+  const rewrite = !editing || $("c-rewrite").checked;
+  if (rewrite) {
+    payload.type = $("c-type").value;
+    payload.settings = collectSettings();
+  }
+  if (editing) payload.enabled = $("c-enabled").checked;
+
+  try {
+    if (!editing) {
+      await api("/api/channels", { method: "POST", body: JSON.stringify(payload) });
+      toast("出口已创建");
+    } else {
+      await api("/api/channels/" + EDIT_CHANNEL, { method: "PATCH", body: JSON.stringify(payload) });
+      toast("已保存");
+    }
+    hide("channel-modal");
+    await refresh();
+  } catch (err) {
+    let message = err.message;
+    if (err.details && err.details.fields) {
+      message += "：" + err.details.fields.map((f) => f.field + " " + f.message).join("；");
+    }
+    errBox.textContent = message;
+    errBox.classList.remove("hidden");
+  }
+}
+
+// ── 删除 ────────────────────────────────────────────────
+async function removeEntry(entry) {
+  if (!confirm(`删除入口「${entry.name}」？用这把 token 的系统会立刻发不出消息。`)) return;
+  try {
+    await api("/api/entries/" + entry.id, { method: "DELETE" });
+    hide("entry-modal");
+    toast("已删除");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function removeRule(rule) {
+  if (!confirm(`删除规则「${rule.name}」？`)) return;
+  try {
+    await api("/api/rules/" + rule.id, { method: "DELETE" });
+    hide("rule-modal");
+    toast("已删除");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function removeChannel(channel) {
+  if (!confirm(`删除出口「${channel.name}」？配置会留档，可人工恢复。`)) return;
+  try {
+    await api("/api/channels/" + channel.id, { method: "DELETE" });
+    hide("channel-modal");
+    toast("已删除");
+    await refresh();
+  } catch (err) { toast(err.message, true); }
 }
 
 // ── 路由预览 ────────────────────────────────────────────
@@ -522,7 +833,7 @@ async function openPreview() {
   $("p-entry").innerHTML = `<option value="">（管理员视角：只有入口条件为空的规则会命中）</option>`
     + ENTRIES.map((e) => `<option value="${e.id}">#${e.id} ${esc(e.name)}</option>`).join("");
   $("p-result").innerHTML = `<div class="muted">选择入口后自动计算</div>`;
-  $("preview-modal").classList.remove("hidden");
+  show("preview-modal");
   await runPreview();
 }
 
@@ -559,351 +870,56 @@ async function runPreview() {
   }
 }
 
-// ── 视图切换 ────────────────────────────────────────────
-function switchView(which, updateHash = true) {
-  VIEW = which;
-  if (updateHash && location.hash !== "#" + which) {
-    history.replaceState(null, "", "#" + which);
-  }
-  for (const name of ["channels", "entries", "rules"]) {
-    $("view-" + name).classList.toggle("hidden", name !== which);
-    $("btn-tab-" + name).classList.toggle("primary", name === which);
-  }
-  const addLabel = { channels: "添加出口", entries: "新增入口", rules: "新建规则" }[which];
-  $("btn-add").textContent = addLabel;
-  $("rules-banner").classList.toggle("hidden", which !== "rules" && RULES.length > 0);
-  if (which === "entries") loadEntries();
-  if (which === "rules") { loadRules().then(() => renderRules()); }
-}
-
-function renderLogTable() {
-  const records = SELECTED == null ? LOGS : LOGS.filter((r) => (r.channel || {}).id === SELECTED);
-  const name = SELECTED == null ? "全部出口" : (CHANNELS.find((c) => c.id === SELECTED) || {}).name || "";
-  $("detail-title").textContent = "发送日志";
-  $("detail-sub").textContent = `${name} · 最近 ${records.length} 条`;
-  $("btn-all-logs").classList.toggle("hidden", SELECTED == null);
-  renderLogs(records);
-}
-
-async function renderDetail(id) {
-  const box = $("detail");
-  if (id == null) { box.classList.add("hidden"); return; }
-  const payload = await api("/api/channels/" + id);
-  const ch = payload.channel || payload;
-  box.classList.remove("hidden");
-  $("detail-title").textContent = ch.name;
-  $("detail-sub").textContent = "#" + ch.id + " · " + ch.type + " · " + ch.status;
-  box.innerHTML = `
-    <div class="row wrap" style="gap:16px">
-      <span><span class="muted">启用：</span>${ch.enabled ? "是" : "否"}</span>
-      <span><span class="muted">创建：</span>${esc(ch.created_at || "")}</span>
-      <span><span class="muted">更新：</span>${esc(ch.updated_at || "")}</span>
-      <span class="grow"></span>
-      <button class="link" id="btn-edit-tags">改标签</button>
-      <button class="link" id="btn-rename">重命名</button>
-      <button class="link danger" id="btn-del2">删除出口</button>
-    </div>
-    <div class="row wrap" style="margin-top:8px">${tagList(ch.tags, "hl")}</div>
-    ${ch.status_detail ? `<div class="err-msg" style="margin-top:8px">${esc(ch.status_detail)}</div>` : ""}
-    <div class="sec">配置（凭据已打码）</div>
-    <pre>${esc(JSON.stringify(ch.settings || {}, null, 2))}</pre>
-    <div class="sec">护栏</div>
-    <pre>${esc(JSON.stringify(ch.options || {}, null, 2))}</pre>`;
-  $("btn-del2").onclick = () => removeChannel(ch.id);
-  $("btn-rename").onclick = () => renameChannel(ch);
-  $("btn-edit-tags").onclick = () => editTags(ch);
-}
-
-// ── 数据加载 ────────────────────────────────────────────
-async function refresh(keepSelection = true) {
-  try {
-    const [health, stats, logs] = await Promise.all([
-      api("/health"), api("/api/stats"), api("/api/logs?limit=500"),
-    ]);
-    if (health.auth === "none") {
-      $("auth-note").classList.remove("hidden");
-      $("auth-note").textContent = "未设置管理员密码：当前无鉴权，仅限本机调试";
-    } else {
-      $("auth-note").classList.add("hidden");
-    }
-    renderStats(stats);
-    ENTRIES = (stats.topology || {}).entries || [];
-    RULES = (stats.topology || {}).rules || [];
-    CHANNELS = (await api("/api/channels")).channels;
-    if (!keepSelection || !CHANNELS.some((c) => c.id === SELECTED)) SELECTED = null;
-    renderChannels();
-    renderRules();
-    LOGS = logs.logs;
-    renderLogTable();
-    if (SELECTED != null) await renderDetail(SELECTED);
-    if (VIEW === "entries") renderEntries();
-    if (VIEW === "rules") renderRules();
-  } catch (err) {
-    toast(err.message || "加载失败", true);
-  }
-}
-
-async function loadEntries() {
-  try {
-    ENTRIES = (await api("/api/entries")).entries || [];
-    renderEntries();
-  } catch (err) { toast(err.message || "加载入口失败", true); }
-}
-
-async function loadRules() {
-  try {
-    RULES = (await api("/api/rules")).rules || [];
-    renderRules();
-  } catch (err) { toast(err.message || "加载规则失败", true); }
-}
-
-// ── 出口操作 ────────────────────────────────────────────
-async function toggleChannel(id, enabled) {
-  try {
-    await api("/api/channels/" + id, { method: "PATCH", body: JSON.stringify({ enabled }) });
-    toast(enabled ? "已启用" : "已停用");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
-
-async function removeChannel(id) {
-  const ch = CHANNELS.find((c) => c.id === id);
-  if (!confirm(`删除出口「${ch ? ch.name : id}」？配置会留档可人工恢复。`)) return;
-  try {
-    await api("/api/channels/" + id, { method: "DELETE" });
-    if (SELECTED === id) SELECTED = null;
-    toast("已删除");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
-
-async function renameChannel(ch) {
-  const name = prompt("新的出口名称：", ch.name);
-  if (!name || name === ch.name) return;
-  try {
-    await api("/api/channels/" + ch.id, { method: "PATCH", body: JSON.stringify({ name }) });
-    toast("已重命名");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
-
-async function editTags(ch) {
-  const value = prompt("标签（逗号分隔）：", (ch.tags || []).join(","));
-  if (value == null) return;
-  try {
-    await api("/api/channels/" + ch.id, { method: "PATCH", body: JSON.stringify({ tags: parseTags(value) }) });
-    toast("标签已更新");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
-
-// ── 添加出口（按 settings_schema 动态渲染表单）────────────
-function fieldFor(name, prop, required) {
-  const desc = prop.description ? `<div class="hint">${esc(prop.description)}</div>` : "";
-  const requiredMark = required ? " <b>*</b>" : "";
-  let control = "";
-  if (prop.enum) {
-    control = `<select data-f="${esc(name)}" data-kind="string">
-      ${prop.enum.map((v) => `<option value="${esc(v)}" ${prop.default === v ? "selected" : ""}>${esc(v)}</option>`).join("")}
-    </select>`;
-  } else if (prop.type === "boolean") {
-    control = `<label class="row"><span class="switch"><input type="checkbox" data-f="${esc(name)}" data-kind="bool" ${prop.default ? "checked" : ""}><span></span></span></label>`;
-  } else if (prop.type === "array") {
-    control = `<input type="text" data-f="${esc(name)}" data-kind="array" placeholder="多个值用逗号分隔">`;
-  } else if (prop.type === "integer" || prop.type === "number") {
-    control = `<input type="number" data-f="${esc(name)}" data-kind="number" value="${esc(prop.default ?? "")}">`;
-  } else if (prop.type === "object") {
-    control = `<textarea data-f="${esc(name)}" data-kind="json"></textarea>`;
-  } else {
-    const kind = prop.secret ? "password" : "text";
-    control = `<input type="${kind}" data-f="${esc(name)}" data-kind="string" value="${prop.secret ? "" : esc(prop.default ?? "")}"${prop.secret ? ' placeholder="已保存的凭据不会回显"' : ""}>`;
-  }
-  return `<label><span class="lb">${esc(prop.title || name)}${requiredMark}</span>${control}${desc}</label>`;
-}
-
-function renderSettingsForm(type) {
-  const schema = (type && type.settings_schema) || {};
-  const required = schema.required || [];
-  const props = schema.properties || {};
-  $("f-settings").innerHTML = Object.keys(props).map((name) =>
-    fieldFor(name, props[name] || {}, required.includes(name))).join("");
-}
-
-async function openAddModal() {
-  if (!TYPES.length) {
-    try { TYPES = (await api("/api/types")).types; } catch (err) { toast(err.message, true); }
-  }
-  $("modal-title").textContent = "添加出口";
-  $("f-type").innerHTML = TYPES.map((t) =>
-    `<option value="${esc(t.type)}">${esc(t.name)}（${esc(t.type)}）</option>`).join("");
-  $("f-type").onchange = () => renderSettingsForm(TYPES.find((t) => t.type === $("f-type").value));
-  $("f-name").value = "";
-  $("f-tags").value = "";
-  $("f-allow-all").checked = false;
-  $("f-rate").value = 30;
-  $("form-err").classList.add("hidden");
-  renderSettingsForm(TYPES[0]);
-  $("modal").classList.remove("hidden");
-}
-
-function collectSettings() {
-  const settings = {};
-  $("f-settings").querySelectorAll("[data-f]").forEach((el) => {
-    const name = el.dataset.f, kind = el.dataset.kind;
-    if (kind === "bool") { settings[name] = el.checked; return; }
-    let value = el.value;
-    if (value === "" || value == null) return;
-    if (kind === "number") value = Number(value);
-    else if (kind === "array") value = value.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-    else if (kind === "json") { try { value = JSON.parse(value); } catch (_) { return; } }
-    settings[name] = value;
-  });
-  return settings;
-}
-
-async function submitChannel() {
-  const errBox = $("form-err");
-  errBox.classList.add("hidden");
-  const type = $("f-type").value;
-  const name = $("f-name").value.trim();
-  if (!name) { errBox.textContent = "出口名称不能为空"; errBox.classList.remove("hidden"); return; }
-  const options = { rate_limit_per_min: Number($("f-rate").value) || 0 };
-  if ($("f-allow-all").checked) options.allow_mention_all = true;
-  try {
-    await api("/api/channels", {
-      method: "POST",
-      body: JSON.stringify({
-        name, type, settings: collectSettings(), options, tags: parseTags($("f-tags").value),
-      }),
-    });
-    $("modal").classList.add("hidden");
-    toast("出口已创建");
-    await refresh();
-  } catch (err) {
-    let message = err.message;
-    if (err.details && err.details.fields) {
-      message += "：" + err.details.fields.map((f) => f.field + " " + f.message).join("；");
-    }
-    errBox.textContent = message;
-    errBox.classList.remove("hidden");
-  }
-}
-
-// ── 入口操作 ────────────────────────────────────────────
-function openEntryModal() {
-  $("e-name").value = "";
-  $("e-tags").value = "";
-  $("entry-err").classList.add("hidden");
-  $("entry-modal").classList.remove("hidden");
-}
-
-async function submitEntry() {
-  const errBox = $("entry-err");
-  errBox.classList.add("hidden");
-  const name = $("e-name").value.trim();
-  if (!name) { errBox.textContent = "入口名称不能为空"; errBox.classList.remove("hidden"); return; }
-  try {
-    const data = await api("/api/entries", {
-      method: "POST",
-      body: JSON.stringify({ name, tags: parseTags($("e-tags").value) }),
-    });
-    $("entry-modal").classList.add("hidden");
-    showSecret(data.entry);
-    await loadEntries();
-    await refresh();
-  } catch (err) {
-    errBox.textContent = err.message;
-    errBox.classList.remove("hidden");
-  }
-}
-
+// ── 明文 token ──────────────────────────────────────────
 function showSecret(entry) {
   $("secret-name").textContent = entry.name;
   $("secret-value").textContent = entry.secret;
-  $("secret-modal").classList.remove("hidden");
-}
-
-// ── 规则操作 ────────────────────────────────────────────
-function fillRuleForm(rule) {
-  EDIT_RULE = rule ? rule.id : null;
-  $("rule-modal-title").textContent = rule ? "编辑路由规则" : "新建路由规则";
-  $("r-name").value = rule ? rule.name : "";
-  const entry = rule && rule.entry;
-  $("r-entry-field").value = entry ? entry.field : "";
-  $("r-entry-op").value = entry ? entry.op : "exact";
-  $("r-entry-value").value = entry ? entry.value : "";
-  $("r-outbound-field").value = rule ? rule.outbound.field : "tag";
-  $("r-outbound-op").value = rule ? rule.outbound.op : "exact";
-  $("r-outbound-value").value = rule ? rule.outbound.value : "";
-  $("rule-err").classList.add("hidden");
-  syncCondEnabled();
-}
-
-function syncCondEnabled() {
-  const off = $("r-entry-field").value === "";
-  $("r-entry-op").disabled = off;
-  $("r-entry-value").disabled = off;
-}
-
-async function submitRule() {
-  const errBox = $("rule-err");
-  errBox.classList.add("hidden");
-  const name = $("r-name").value.trim();
-  if (!name) { errBox.textContent = "规则名称不能为空"; errBox.classList.remove("hidden"); return; }
-  const outValue = $("r-outbound-value").value.trim();
-  if (!outValue) { errBox.textContent = "出口条件的匹配值不能为空"; errBox.classList.remove("hidden"); return; }
-  const entryField = $("r-entry-field").value;
-  const entryValue = $("r-entry-value").value.trim();
-  if (entryField && !entryValue) {
-    errBox.textContent = "选了入口筛选方式就必须填匹配值（不想限制就选「所有入口」）";
-    errBox.classList.remove("hidden");
-    return;
-  }
-  const payload = {
-    name,
-    outbound: { field: $("r-outbound-field").value, op: $("r-outbound-op").value, value: outValue },
-  };
-  if (entryField) {
-    payload.entry = { field: entryField, op: $("r-entry-op").value, value: entryValue };
-  }
-  try {
-    if (EDIT_RULE == null) {
-      await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
-    } else {
-      // 编辑时如需清空入口条件，必须显式告诉后端
-      payload.clear_entry = !entryField;
-      await api("/api/rules/" + EDIT_RULE, { method: "PATCH", body: JSON.stringify(payload) });
-    }
-    $("rule-modal").classList.add("hidden");
-    toast("规则已保存");
-    await loadRules();
-    await refresh();
-  } catch (err) {
-    errBox.textContent = err.message;
-    errBox.classList.remove("hidden");
-  }
+  show("secret-modal");
 }
 
 // ── 事件绑定 ────────────────────────────────────────────
 $("btn-refresh").onclick = () => refresh();
-$("btn-add").onclick = () => {
-  if (VIEW === "entries") openEntryModal();
-  else if (VIEW === "rules") { fillRuleForm(null); $("rule-modal").classList.remove("hidden"); }
-  else openAddModal();
-};
-$("btn-tab-channels").onclick = () => switchView("channels");
-$("btn-tab-entries").onclick = () => switchView("entries");
-$("btn-tab-rules").onclick = () => switchView("rules");
-
-$("btn-new-entry").onclick = () => openEntryModal();
-$("btn-new-rule").onclick = () => { fillRuleForm(null); $("rule-modal").classList.remove("hidden"); };
+$("add-entry").onclick = () => openEntryModal(null);
+$("add-rule").onclick = () => openRuleModal(null);
+$("add-channel").onclick = () => openChannelModal(null);
 $("btn-preview").onclick = () => openPreview();
 $("p-entry").onchange = () => runPreview();
-$("btn-preview-close").onclick = () => $("preview-modal").classList.add("hidden");
+$("p-close").onclick = () => hide("preview-modal");
 $("r-entry-field").onchange = () => syncCondEnabled();
 
-$("btn-secret-close").onclick = () => $("secret-modal").classList.add("hidden");
-$("btn-secret-copy").onclick = async () => {
+$("e-cancel").onclick = () => hide("entry-modal");
+$("e-submit").onclick = () => submitEntry();
+$("e-delete").onclick = () => {
+  const entry = ENTRIES.find((e) => e.id === EDIT_ENTRY);
+  if (entry) removeEntry(entry);
+};
+
+$("r-cancel").onclick = () => hide("rule-modal");
+$("r-submit").onclick = () => submitRule();
+$("r-delete").onclick = () => {
+  const rule = RULES.find((r) => r.id === EDIT_RULE);
+  if (rule) removeRule(rule);
+};
+
+$("c-cancel").onclick = () => hide("channel-modal");
+$("c-submit").onclick = () => submitChannel();
+$("c-delete").onclick = () => {
+  const channel = CHANNELS.find((c) => c.id === EDIT_CHANNEL);
+  if (channel) removeChannel(channel);
+};
+$("c-rewrite").onchange = () => {
+  const rewrite = $("c-rewrite").checked;
+  $("c-settings").classList.toggle("hidden", !rewrite);
+  if (rewrite) {
+    $("c-type").disabled = false;
+    renderSettingsForm(TYPES.find((t) => t.type === $("c-type").value));
+  } else {
+    $("c-type").disabled = true;
+  }
+};
+
+$("secret-close").onclick = () => hide("secret-modal");
+$("secret-copy").onclick = async () => {
   const value = $("secret-value").textContent;
   try {
     await navigator.clipboard.writeText(value);
@@ -913,137 +929,50 @@ $("btn-secret-copy").onclick = async () => {
   }
 };
 
-$("entry-rows").addEventListener("change", async (event) => {
-  const toggle = event.target.closest("input[data-entry-toggle]");
-  if (!toggle) return;
-  try {
-    await api("/api/entries/" + toggle.dataset.entryToggle, {
-      method: "PATCH", body: JSON.stringify({ enabled: toggle.checked }),
-    });
-    toast(toggle.checked ? "已启用" : "已禁用（该 token 立刻失效）");
-    await loadEntries();
-  } catch (err) { toast(err.message, true); }
-});
+$("log-filter").onchange = () => { LOG_FILTER = $("log-filter").value; renderLogs(); };
 
-$("entry-rows").onclick = async (event) => {
-  const tagsBtn = event.target.closest("[data-entry-tags]");
-  if (tagsBtn) {
-    const current = (ENTRIES.find((e) => e.id === Number(tagsBtn.dataset.entryTags)) || {}).tags || [];
-    const value = prompt("标签（逗号分隔）：", current.join(","));
-    if (value == null) return;
-    try {
-      await api("/api/entries/" + tagsBtn.dataset.entryTags, {
-        method: "PATCH", body: JSON.stringify({ tags: parseTags(value) }),
-      });
-      toast("标签已更新");
-      await loadEntries();
-      await refresh();
-    } catch (err) { toast(err.message, true); }
-    return;
-  }
-  const rename = event.target.closest("[data-entry-rename]");
-  if (rename) {
-    const name = prompt("新的入口名称：", rename.dataset.name);
-    if (!name || name === rename.dataset.name) return;
-    try {
-      await api("/api/entries/" + rename.dataset.entryRename, { method: "PATCH", body: JSON.stringify({ name }) });
-      toast("已重命名");
-      await loadEntries();
-    } catch (err) { toast(err.message, true); }
-    return;
-  }
-  const del = event.target.closest("[data-entry-del]");
-  if (del) {
-    if (!confirm(`删除入口「${del.dataset.name}」？用这把 token 的系统会立刻发不出消息。`)) return;
-    try {
-      await api("/api/entries/" + del.dataset.entryDel, { method: "DELETE" });
-      toast("已删除");
-      await loadEntries();
-      await refresh();
-    } catch (err) { toast(err.message, true); }
-  }
-};
+// 点击行 → 弹出编辑（点开关不触发）
+function bindRowClick(listId, lookup, opener) {
+  $(listId).onclick = (event) => {
+    if (event.target.closest("label.switch")) return;
+    const item = event.target.closest("li.item");
+    if (!item) return;
+    const id = Number(Object.values(item.dataset)[0]);
+    const target = lookup().find((x) => x.id === id);
+    if (target) opener(target);
+  };
+}
+bindRowClick("list-entries", () => ENTRIES, openEntryModal);
+bindRowClick("list-rules", () => RULES, openRuleModal);
+bindRowClick("list-channels", () => CHANNELS, openChannelModal);
 
-$("rule-rows").addEventListener("change", async (event) => {
-  const toggle = event.target.closest("input[data-rule-toggle]");
-  if (!toggle) return;
+async function toggle(kind, id, enabled) {
   try {
-    await api("/api/rules/" + toggle.dataset.ruleToggle, {
-      method: "PATCH", body: JSON.stringify({ enabled: toggle.checked }),
-    });
-    toast(toggle.checked ? "已启用" : "已停用");
-    await loadRules();
+    await api(`/api/${kind}/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    toast(enabled ? "已启用" : "已停用");
     await refresh();
   } catch (err) { toast(err.message, true); }
-});
-
-$("rule-rows").onclick = async (event) => {
-  const edit = event.target.closest("[data-rule-edit]");
-  if (edit) {
-    const rule = RULES.find((r) => r.id === Number(edit.dataset.ruleEdit));
-    fillRuleForm(rule);
-    $("rule-modal").classList.remove("hidden");
-    return;
-  }
-  const del = event.target.closest("[data-rule-del]");
-  if (del) {
-    if (!confirm(`删除规则「${del.dataset.name}」？`)) return;
-    try {
-      await api("/api/rules/" + del.dataset.ruleDel, { method: "DELETE" });
-      toast("已删除");
-      await loadRules();
-      await refresh();
-    } catch (err) { toast(err.message, true); }
-  }
-};
-
-$("channel-list").onclick = (event) => {
-  // 开关用 change 事件处理：label 的合成点击会让 click 事件触发两次、顺序不确定
-  if (event.target.closest("label.switch")) return;
-  const del = event.target.closest("[data-del]");
-  if (del) { event.stopPropagation(); removeChannel(Number(del.dataset.del)); return; }
-  const item = event.target.closest(".chan");
-  if (item) {
-    const id = Number(item.dataset.id);
-    SELECTED = (SELECTED === id) ? null : id;
-    renderChannels();
-    renderLogTable();
-    renderDetail(SELECTED).catch((err) => toast(err.message || "加载出口详情失败", true));
-  }
-};
-
-$("channel-list").addEventListener("change", (event) => {
-  const toggle = event.target.closest("input[data-toggle]");
-  if (!toggle) return;
-  toggleChannel(Number(toggle.dataset.toggle), toggle.checked);
-});
-
-$("btn-all-logs").onclick = () => {
-  SELECTED = null; renderChannels(); renderLogTable(); renderDetail(null).catch(() => {});
-};
-
-$("btn-cancel").onclick = () => $("modal").classList.add("hidden");
-$("btn-submit").onclick = () => submitChannel();
-$("btn-entry-cancel").onclick = () => $("entry-modal").classList.add("hidden");
-$("btn-entry-submit").onclick = () => submitEntry();
-$("btn-rule-cancel").onclick = () => $("rule-modal").classList.add("hidden");
-$("btn-rule-submit").onclick = () => submitRule();
-
-for (const id of ["modal", "entry-modal", "rule-modal", "preview-modal", "secret-modal"]) {
-  $(id).onclick = (event) => { if (event.target === $(id)) $(id).classList.add("hidden"); };
 }
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  for (const id of ["modal", "entry-modal", "rule-modal", "preview-modal", "secret-modal"]) {
-    $(id).classList.add("hidden");
-  }
+
+$("list-entries").addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-entry-toggle]");
+  if (input) toggle("entries", input.dataset.entryToggle, input.checked);
+});
+$("list-rules").addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-rule-toggle]");
+  if (input) toggle("rules", input.dataset.ruleToggle, input.checked);
+});
+$("list-channels").addEventListener("change", (event) => {
+  const input = event.target.closest("input[data-channel-toggle]");
+  if (input) toggle("channels", input.dataset.channelToggle, input.checked);
 });
 
-// 支持深链：#channels / #entries / #rules
-const initial = (location.hash || "").replace("#", "");
-refresh().then(() => {
-  if (["channels", "entries", "rules"].includes(initial)) switchView(initial, false);
-});
+for (const id of MODALS) {
+  $(id).onclick = (event) => { if (event.target === $(id)) hide(id); };
+}
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeAll(); });
+
+refresh();
 </script>
 </body>
 </html>
