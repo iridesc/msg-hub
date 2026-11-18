@@ -262,7 +262,9 @@
             <option value="prefix">以…开头</option>
             <option value="suffix">以…结尾</option>
           </select></label>
-        <label><span class="lb">匹配值</span><input type="text" id="r-entry-value" placeholder="如 app:pibox"></label>
+        <label><span class="lb">匹配值</span>
+          <input type="text" id="r-entry-value" list="dl-entry-value" placeholder="可直接输入，也可从下拉里选">
+        </label>
       </div>
       <div class="hint" style="margin:-6px 0 10px">选「（所有入口）」表示不限制来源</div>
 
@@ -281,7 +283,9 @@
             <option value="prefix">以…开头</option>
             <option value="suffix">以…结尾</option>
           </select></label>
-        <label><span class="lb">匹配值 <b>*</b></span><input type="text" id="r-outbound-value" placeholder="如 kind:alert"></label>
+        <label><span class="lb">匹配值 <b>*</b></span>
+          <input type="text" id="r-outbound-value" list="dl-outbound-value" placeholder="可直接输入，也可从下拉里选">
+        </label>
       </div>
       <div class="hint" style="margin:-6px 0 0">想发给多个出口就再建一条规则——规则之间是累加关系</div>
 
@@ -375,6 +379,9 @@
     </div>
   </div>
 </div>
+
+<datalist id="dl-entry-value"></datalist>
+<datalist id="dl-outbound-value"></datalist>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -646,6 +653,48 @@ async function submitEntry() {
 // ── 路由弹窗 ────────────────────────────────────────────
 let EDIT_RULE = null;
 
+function fillDatalist(id, values) {
+  const seen = new Set();
+  const items = [];
+  for (const raw of values) {
+    const text = String(raw ?? "").trim();
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(text);
+  }
+  $(id).innerHTML = items.map((v) => `<option value="${esc(v)}"></option>`).join("");
+}
+
+/** 条件可选的「已有值」：对象身上现有的 + 规则里已经用过的。 */
+function condCandidates(side, field) {
+  const out = [];
+  if (side === "entry") {
+    for (const entry of ENTRIES) {
+      if (field === "entry") out.push(entry.name, entry.id);
+      else out.push(...(entry.tags || []));
+    }
+  } else {
+    for (const channel of CHANNELS) {
+      if (field === "name") out.push(channel.name);
+      else if (field === "type") out.push(channel.type);
+      else out.push(...(channel.tags || []));
+    }
+  }
+  // 规则里已经写过的值也放进候选，便于复用同一套命名
+  for (const rule of RULES) {
+    const cond = side === "entry" ? rule.entry : rule.outbound;
+    if (cond && cond.field === field) out.push(cond.value);
+  }
+  return out;
+}
+
+function refreshCondCandidates() {
+  fillDatalist("dl-entry-value", condCandidates("entry", $("r-entry-field").value || "tag"));
+  fillDatalist("dl-outbound-value", condCandidates("outbound", $("r-outbound-field").value || "tag"));
+}
+
 function syncCondEnabled() {
   const off = $("r-entry-field").value === "";
   $("r-entry-op").disabled = off;
@@ -668,6 +717,7 @@ function openRuleModal(rule) {
   $("r-delete").classList.toggle("hidden", !rule);
   $("rule-err").classList.add("hidden");
   syncCondEnabled();
+  refreshCondCandidates();
   show("rule-modal");
 }
 
@@ -862,9 +912,16 @@ async function removeChannel(channel) {
 
 // ── 路由测试 ────────────────────────────────────────────
 function openPreview() {
-  $("p-entry").innerHTML = `<option value="">（管理员视角：只有入口条件为空的规则会命中）</option>`
-    + ENTRIES.map((e) => `<option value="${e.id}">#${e.id} ${esc(e.name)}</option>`).join("");
-  $("p-result").innerHTML = `<div class="muted">选一个入口，点「测试」看会投递到哪些出口。</div>`;
+  if (ENTRIES.length) {
+    $("p-entry").innerHTML = ENTRIES.map(
+      (e) => `<option value="${e.id}">#${e.id} ${esc(e.name)}</option>`).join("");
+    $("p-run").disabled = false;
+    $("p-result").innerHTML = `<div class="muted">选一个入口，点「测试」看会投递到哪些出口。</div>`;
+  } else {
+    $("p-entry").innerHTML = `<option value="">（还没有入口）</option>`;
+    $("p-run").disabled = true;
+    $("p-result").innerHTML = `<div class="err-msg">还没有任何入口，先在左边新建一个再测。</div>`;
+  }
   show("preview-modal");
 }
 
@@ -950,7 +1007,8 @@ $("add-channel").onclick = () => openChannelModal(null);
 $("btn-preview").onclick = () => openPreview();
 $("p-run").onclick = () => runPreview();
 $("p-close").onclick = () => hide("preview-modal");
-$("r-entry-field").onchange = () => syncCondEnabled();
+$("r-entry-field").onchange = () => { syncCondEnabled(); refreshCondCandidates(); };
+$("r-outbound-field").onchange = () => refreshCondCandidates();
 
 $("e-cancel").onclick = () => hide("entry-modal");
 $("e-submit").onclick = () => submitEntry();

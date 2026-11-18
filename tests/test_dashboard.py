@@ -73,6 +73,11 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     # 路由测试：选入口 + 显式「测试」按钮（不在选择时自动计算）
     assert 'id="btn-preview"' in body and "路由测试" in body
     assert 'id="p-run"' in body and ">测试<" in body
+    # 下拉里不塞「管理员视角」这种假选项
+    assert "管理员视角" not in body
+    # 规则匹配值：既有候选下拉，又能自由输入
+    assert 'list="dl-entry-value"' in body and 'list="dl-outbound-value"' in body
+    assert '<datalist id="dl-entry-value">' in body
     # 点行弹窗修改：三个编辑弹窗都在
     for modal in ("entry-modal", "rule-modal", "channel-modal"):
         assert f'id="{modal}"' in body, modal
