@@ -1,6 +1,6 @@
 [project]
 name = "msg-hub"
-version = "0.2.0"
+version = "0.3.0"
 description = "多渠道路由的消息发送 MCP 服务：渠道增删改查 + 统一发送"
 requires-python = ">=3.12"
 license = { text = "MIT" }

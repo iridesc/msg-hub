@@ -1,23 +1,17 @@
 """单一状态文件的持久化：渠道 + 入口 + 路由规则全在一个 `state.json` 里。
 
-为什么合成一个文件：凭据曾经单独存 `config/<id>.json`，导致一个渠道的数据
-劈成两半——索引写成功、配置写失败（或误删、备份没对上）就会出现
-「有渠道无配置」的 broken 状态，还要为它写回滚逻辑。合起来之后：
+**名称就是唯一标识**（没有 id）：`resolve` 只按名称寻址，创建时全局唯一。
+好处是接口、日志、规则条件里只有一套标识，不会出现「传 id 还是传名字」的歧义；
+代价是改名等于换实体——引用了旧名称的路由规则会失效，所以名称要稳定。
 
-    一次 read  = 拿到全部状态（不再是 N 个渠道 N 次 open）
-    一次写盘   = 原子替换，不会出现半截状态
-
-布局（version 3）：
+布局（version 4）：
 
     {
-      "version": 3,
-      "next_id":       1,   # 渠道
-      "next_entry_id": 1,   # 入口
-      "next_rule_id":  1,   # 规则
-      "channels": [ {…, "tags": []} ],
-      "entries":  [ {…, "tags": []} ],   # v2 里叫 tokens
-      "rules":    [ {id, name, enabled, entry, outbound} ],
-      "deleted":  [ 渠道软删除留档 ]
+      "version": 4,
+      "channels": [ {name, type, enabled, settings, options, tags, …} ],
+      "entries":  [ {name, secret, tags, enabled, …} ],
+      "rules":    [ {name, enabled, entry, outbound, …} ],
+      "deleted":  [ 出口软删除留档 ]
     }
 
 磁盘上的其他文件：
@@ -56,7 +50,7 @@ try:  # POSIX 文件锁；非 POSIX 平台降级为纯线程锁
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
-STATE_VERSION = 3
+STATE_VERSION = 4
 MAX_DELETED_KEPT = 100
 
 
@@ -85,8 +79,9 @@ def new_secret() -> str:
     return ENTRY_PREFIX + secrets.token_hex(ENTRY_BYTES)
 
 
-def _next_id(items: list[dict[str, Any]], key: str = "id") -> int:
-    return max((int(item.get(key, 0)) for item in items), default=0) + 1
+def _same(a: Any, b: Any) -> bool:
+    """名称比较：大小写不敏感（避免 Test / test 两把并存）。"""
+    return str(a).casefold() == str(b).casefold()
 
 
 class Store:
@@ -127,9 +122,6 @@ class Store:
     def _empty_state() -> dict[str, Any]:
         return {
             "version": STATE_VERSION,
-            "next_id": 1,
-            "next_entry_id": 1,
-            "next_rule_id": 1,
             "channels": [],
             "entries": [],
             "rules": [],
@@ -150,24 +142,31 @@ class Store:
             ]
             raw.pop("tokens", None)
             raw["rules"] = raw.get("rules") or []
-            raw["next_entry_id"] = int(
-                raw.get("next_entry_id") or raw.get("next_token_id") or _next_id(raw["entries"])
-            )
-            raw.pop("next_token_id", None)
-            raw["next_rule_id"] = int(raw.get("next_rule_id") or _next_id(raw["rules"]))
             for bucket in ("channels", "deleted"):
                 for item in raw.get(bucket) or []:
                     if isinstance(item, dict):
                         item["tags"] = normalize_tags(item.get("tags"))
             version = 3
 
+        # v3 → v4：去掉 id，名称成为唯一标识
+        if version < 4:
+            for bucket in ("channels", "entries", "rules", "deleted"):
+                for item in raw.get(bucket) or []:
+                    if isinstance(item, dict):
+                        item.pop("id", None)
+            for key in (
+                "next_id",
+                "next_entry_id",
+                "next_rule_id",
+                "next_token_id",
+            ):
+                raw.pop(key, None)
+            version = 4
+
         raw["version"] = version
         raw.setdefault("deleted", [])
         raw.setdefault("entries", [])
         raw.setdefault("rules", [])
-        raw.setdefault("next_id", _next_id(raw.get("channels") or []))
-        raw.setdefault("next_entry_id", _next_id(raw["entries"]))
-        raw.setdefault("next_rule_id", _next_id(raw["rules"]))
         return raw
 
     def _load(self) -> dict[str, Any]:
@@ -193,14 +192,20 @@ class Store:
         """启动时把内存里的升级结果落盘一次，让文件本身也是新格式。"""
         try:
             with self._exclusive():
-                state = self._load()
-                disk_version = 0
                 try:
-                    disk_version = int(_read_json(self.settings.state_path).get("version") or 0)
-                except (OSError, json.JSONDecodeError, AttributeError):
-                    disk_version = 0
-                if disk_version != STATE_VERSION or "tokens" in (_read_json(self.settings.state_path) or {}):
-                    self._save(state)
+                    disk = _read_json(self.settings.state_path)
+                except (OSError, json.JSONDecodeError):
+                    disk = None
+                if not isinstance(disk, dict):
+                    return
+                stale = (
+                    int(disk.get("version") or 0) != STATE_VERSION
+                    or "tokens" in disk
+                    or any(k.startswith("next_") for k in disk)
+                    or any("id" in item for item in disk.get("channels") or [] if isinstance(item, dict))
+                )
+                if stale:
+                    self._save(self._load())
         except HubError:
             raise
         except Exception:  # pragma: no cover - 落盘失败不该阻断启动
@@ -215,49 +220,43 @@ class Store:
                 items += [Channel.from_dict(raw) for raw in state.get("deleted", [])]
             return items
 
-    def get(self, channel_id: int) -> Channel:
+    def get(self, name: str) -> Channel:
         for channel in self.channels():
-            if channel.id == channel_id:
+            if channel.name == name:
                 return channel
-        raise HubError("not_found", f"渠道 id={channel_id} 不存在")
+        raise HubError("not_found", f"出口 {name} 不存在")
 
     def insert(self, channel: Channel) -> Channel:
         with self._exclusive():
             state = self._load()
-            if any(
-                str(raw["name"]).casefold() == channel.name.casefold()
-                for raw in state["channels"]
-            ):
-                raise HubError("invalid_argument", f"渠道名称已存在：{channel.name}")
-            channel.id = int(state["next_id"])
-            state["next_id"] = channel.id + 1
+            if any(_same(raw["name"], channel.name) for raw in state["channels"]):
+                raise HubError("invalid_argument", f"出口名称已存在：{channel.name}")
             state["channels"].append(channel.to_dict())
             self._save(state)
             return channel
 
-    def replace(self, channel: Channel) -> Channel:
+    def replace(self, old_name: str, channel: Channel) -> Channel:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["channels"]):
-                if int(raw["id"]) != channel.id:
+                if raw["name"] != old_name:
                     continue
                 if any(
-                    str(other["name"]).casefold() == channel.name.casefold()
-                    and int(other["id"]) != channel.id
+                    _same(other["name"], channel.name) and other["name"] != old_name
                     for other in state["channels"]
                 ):
-                    raise HubError("invalid_argument", f"渠道名称已存在：{channel.name}")
+                    raise HubError("invalid_argument", f"出口名称已存在：{channel.name}")
                 channel.updated_at = now_iso()
                 state["channels"][index] = channel.to_dict()
                 self._save(state)
                 return channel
-            raise HubError("not_found", f"渠道 id={channel.id} 不存在")
+            raise HubError("not_found", f"出口 {old_name} 不存在")
 
-    def soft_delete(self, channel_id: int) -> Channel:
+    def soft_delete(self, name: str) -> Channel:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["channels"]):
-                if int(raw["id"]) != channel_id:
+                if raw["name"] != name:
                     continue
                 channel = Channel.from_dict(raw)
                 del state["channels"][index]
@@ -265,64 +264,61 @@ class Store:
                 state["deleted"].append({**channel.to_dict(), "deleted_at": now_iso()})
                 self._save(state)
                 return channel
-            raise HubError("not_found", f"渠道 id={channel_id} 不存在")
+            raise HubError("not_found", f"出口 {name} 不存在")
 
     # ── 入口 ────────────────────────────────────────────
     def entries(self) -> list[Entry]:
         with self._lock:
             return [Entry.from_dict(raw) for raw in self._load()["entries"]]
 
-    def get_entry(self, entry_id: int) -> Entry:
+    def get_entry(self, name: str) -> Entry:
         for entry in self.entries():
-            if entry.id == entry_id:
+            if entry.name == name:
                 return entry
-        raise HubError("not_found", f"入口 id={entry_id} 不存在")
+        raise HubError("not_found", f"入口 {name} 不存在")
 
     def insert_entry(self, name: str, tags: list[str] | None = None, enabled: bool = True) -> Entry:
         with self._exclusive():
             state = self._load()
-            if any(str(raw["name"]).casefold() == name.casefold() for raw in state["entries"]):
+            if any(_same(raw["name"], name) for raw in state["entries"]):
                 raise HubError("invalid_argument", f"入口名称已存在：{name}")
             entry = Entry(
-                id=int(state["next_entry_id"]),
                 name=name,
                 secret=new_secret(),
                 tags=normalize_tags(tags),
                 enabled=enabled,
             )
-            state["next_entry_id"] = entry.id + 1
             state["entries"].append(entry.to_dict())
             self._save(state)
             return entry
 
-    def replace_entry(self, entry: Entry) -> Entry:
+    def replace_entry(self, old_name: str, entry: Entry) -> Entry:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["entries"]):
-                if int(raw["id"]) != entry.id:
+                if raw["name"] != old_name:
                     continue
                 if any(
-                    str(other["name"]).casefold() == entry.name.casefold()
-                    and int(other["id"]) != entry.id
+                    _same(other["name"], entry.name) and other["name"] != old_name
                     for other in state["entries"]
                 ):
                     raise HubError("invalid_argument", f"入口名称已存在：{entry.name}")
                 state["entries"][index] = entry.to_dict()
                 self._save(state)
                 return entry
-            raise HubError("not_found", f"入口 id={entry.id} 不存在")
+            raise HubError("not_found", f"入口 {old_name} 不存在")
 
-    def delete_entry(self, entry_id: int) -> Entry:
+    def delete_entry(self, name: str) -> Entry:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["entries"]):
-                if int(raw["id"]) != entry_id:
+                if raw["name"] != name:
                     continue
                 entry = Entry.from_dict(raw)
                 del state["entries"][index]
                 self._save(state)
                 return entry
-            raise HubError("not_found", f"入口 id={entry_id} 不存在")
+            raise HubError("not_found", f"入口 {name} 不存在")
 
     def find_entry_by_secret(self, secret: str) -> Entry | None:
         """按明文查找启用的入口（认证用）。
@@ -341,13 +337,13 @@ class Store:
             return None
         return found
 
-    def touch_entry(self, entry_id: int) -> None:
+    def touch_entry(self, name: str) -> None:
         """记录入口使用情况（last_used_at / usage_count）。失败不影响请求。"""
         try:
             with self._exclusive():
                 state = self._load()
                 for raw in state["entries"]:
-                    if int(raw["id"]) == entry_id:
+                    if raw["name"] == name:
                         raw["last_used_at"] = now_iso()
                         raw["usage_count"] = int(raw.get("usage_count") or 0) + 1
                         self._save(state)
@@ -360,32 +356,29 @@ class Store:
         with self._lock:
             return [Rule.from_dict(raw) for raw in self._load()["rules"]]
 
-    def get_rule(self, rule_id: int) -> Rule:
+    def get_rule(self, name: str) -> Rule:
         for rule in self.rules():
-            if rule.id == rule_id:
+            if rule.name == name:
                 return rule
-        raise HubError("not_found", f"规则 id={rule_id} 不存在")
+        raise HubError("not_found", f"规则 {name} 不存在")
 
     def insert_rule(self, rule: Rule) -> Rule:
         with self._exclusive():
             state = self._load()
-            if any(str(raw["name"]).casefold() == rule.name.casefold() for raw in state["rules"]):
+            if any(_same(raw["name"], rule.name) for raw in state["rules"]):
                 raise HubError("invalid_argument", f"规则名称已存在：{rule.name}")
-            rule.id = int(state["next_rule_id"])
-            state["next_rule_id"] = rule.id + 1
             state["rules"].append(rule.to_dict())
             self._save(state)
             return rule
 
-    def replace_rule(self, rule: Rule) -> Rule:
+    def replace_rule(self, old_name: str, rule: Rule) -> Rule:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["rules"]):
-                if int(raw["id"]) != rule.id:
+                if raw["name"] != old_name:
                     continue
                 if any(
-                    str(other["name"]).casefold() == rule.name.casefold()
-                    and int(other["id"]) != rule.id
+                    _same(other["name"], rule.name) and other["name"] != old_name
                     for other in state["rules"]
                 ):
                     raise HubError("invalid_argument", f"规则名称已存在：{rule.name}")
@@ -393,19 +386,19 @@ class Store:
                 state["rules"][index] = rule.to_dict()
                 self._save(state)
                 return rule
-            raise HubError("not_found", f"规则 id={rule.id} 不存在")
+            raise HubError("not_found", f"规则 {old_name} 不存在")
 
-    def delete_rule(self, rule_id: int) -> Rule:
+    def delete_rule(self, name: str) -> Rule:
         with self._exclusive():
             state = self._load()
             for index, raw in enumerate(state["rules"]):
-                if int(raw["id"]) != rule_id:
+                if raw["name"] != name:
                     continue
                 rule = Rule.from_dict(raw)
                 del state["rules"][index]
                 self._save(state)
                 return rule
-            raise HubError("not_found", f"规则 id={rule_id} 不存在")
+            raise HubError("not_found", f"规则 {name} 不存在")
 
     # ── 旧版兼容 ────────────────────────────────────────
     def _import_legacy_token(self) -> None:
@@ -423,14 +416,12 @@ class Store:
         if state["entries"]:
             return  # 已经有入口了，不重复导入
         entry = Entry(
-            id=int(state["next_entry_id"]),
             name="旧版 MSG_HUB_TOKEN（已迁移，可删除）",
             secret=legacy,
             # 旧 token 能发所有渠道，用通配标签标记，但**不会自动生成规则**：
             # 路由必须由管理员显式配置，否则一条消息会广播到所有渠道。
             tags=["legacy"],
         )
-        state["next_entry_id"] = entry.id + 1
         state["entries"].append(entry.to_dict())
         self._save(state)
 
@@ -458,7 +449,9 @@ class Store:
 
         config_dir = self.settings.data_dir / "config"
         state = self._empty_state()
-        state["next_id"] = int(raw.get("next_id") or 1)
+        # 标成 v1：让 _upgrade 把整条迁移链（v1→v3→v4）都跑一遍，
+        # 否则会带着 v4 的版本号跳过「剥 id」那一步。
+        state["version"] = 1
 
         for item in raw["channels"]:
             if not isinstance(item, dict):
@@ -520,6 +513,7 @@ class Store:
             readme,
             "# msg-hub 数据目录\n\n"
             "- `state.json`：全部持久化状态（渠道 + 入口 + 路由规则 + 凭据），权限 0600\n"
+            "  **名称就是唯一标识，没有 id**：创建时全局唯一，改名等于换实体\n"
             "- `logs/`：发送审计日志（按天 jsonl）\n"
             "- `.cache/`：插件可用的缓存目录（如 access_token）\n"
             "- `.lock`：状态写入的跨进程锁文件，不要删\n"

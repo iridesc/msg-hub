@@ -113,7 +113,8 @@ class Channel:
     一个文件 = 一次原子写 = 不会出现「有渠道无配置」的 broken 状态。
     """
 
-    id: int
+    # 名称就是唯一标识（没有 id）：改名等于换一个实体，路由规则会跟着失效，
+    # 所以名称要稳定；创建时全局唯一。
     name: str
     type: str
     enabled: bool = True
@@ -125,7 +126,6 @@ class Channel:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
             "name": self.name,
             "type": self.type,
             "enabled": self.enabled,
@@ -150,7 +150,6 @@ class Channel:
             settings = dict(raw.get("settings") or {})
             options = dict(raw.get("options") or {})
         return cls(
-            id=int(raw["id"]),
             name=str(raw["name"]),
             type=str(raw["type"]),
             enabled=bool(raw.get("enabled", True)),
@@ -173,7 +172,6 @@ class Channel:
 
 # Channel.to_dict() 产出的字段名，从_dict 反推旧式配置时要跳过
 _CHANNEL_META = {
-    "id",
     "name",
     "type",
     "enabled",
@@ -203,7 +201,7 @@ class Entry:
     代价：能打开 dashboard 的人就能看到所有 token 明文（截图/录屏会带出去）。
     """
 
-    id: int
+    # 名称即标识，没有 id；创建时全局唯一
     name: str
     secret: str
     tags: list[str] = field(default_factory=list)
@@ -221,13 +219,8 @@ class Entry:
     def masked(self) -> str:
         return f"***{self.secret[-4:]}"
 
-    def match_candidates(self) -> list[str]:
-        """入口条件可匹配的候选值：名称、id、标签。"""
-        return [self.name, str(self.id), *self.tags]
-
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
             "name": self.name,
             "secret": self.secret,
             "tags": self.tags,
@@ -244,7 +237,6 @@ class Entry:
         避免 token 在无关的地方扩散。
         """
         return {
-            "id": self.id,
             "name": self.name,
             "secret": self.secret,
             "prefix": self.prefix,
@@ -259,7 +251,6 @@ class Entry:
     def to_brief(self) -> dict[str, Any]:
         """嵌进其他响应时用：不含明文，只留身份与标签。"""
         return {
-            "id": self.id,
             "name": self.name,
             "prefix": self.prefix,
             "tags": self.tags,
@@ -269,7 +260,6 @@ class Entry:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Entry":
         return cls(
-            id=int(raw["id"]),
             name=str(raw["name"]),
             secret=str(raw["secret"]),
             tags=normalize_tags(raw.get("tags")),
@@ -297,7 +287,7 @@ OP_LABELS = {
     "suffix": "以…结尾",
 }
 FIELD_LABELS = {
-    "entry": "入口名称/id",
+    "entry": "入口名称",
     "tag": "标签",
     "name": "出口名称",
     "type": "出口类型",
@@ -374,7 +364,7 @@ class Rule:
     没有优先级，规则之间正交——加一条新规则不会改变已有规则的行为。
     """
 
-    id: int
+    # 名称即标识，没有 id
     name: str
     outbound: Condition
     entry: Condition | None = None
@@ -384,7 +374,6 @@ class Rule:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "id": self.id,
             "name": self.name,
             "enabled": self.enabled,
             "entry": self.entry.to_dict() if self.entry else None,
@@ -397,7 +386,6 @@ class Rule:
     def from_dict(cls, raw: dict[str, Any]) -> "Rule":
         entry_raw = raw.get("entry")
         return cls(
-            id=int(raw["id"]),
             name=str(raw["name"]),
             entry=Condition.from_dict(entry_raw, side="entry") if entry_raw else None,
             outbound=Condition.from_dict(raw.get("outbound"), side="outbound"),

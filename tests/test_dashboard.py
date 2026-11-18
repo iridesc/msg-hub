@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+from urllib.parse import quote
 
 from starlette.testclient import TestClient
 
@@ -123,7 +124,9 @@ def test_disabled_entry_is_rejected(cfg):
         ).status_code == 200
 
         # 禁用后立刻失效
-        client.patch(f"/api/entries/{entry['id']}", json={"enabled": False}, headers=basic("secret"))
+        client.patch(
+            f"/api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=basic("secret")
+        )
         assert client.post(
             "/api/send", json={"text": "x", "dry_run": True}, headers=bearer
         ).status_code == 401
@@ -171,25 +174,27 @@ def test_manual_channel_lifecycle_through_api(cfg):
             headers=auth,
         )
         assert created.status_code == 201
-        channel_id = created.json()["channel"]["id"]
+        channel_name = created.json()["channel"]["name"]
 
         # 停用 → 列表里状态变 disabled
-        patched = client.patch(f"/api/channels/{channel_id}", json={"enabled": False}, headers=auth)
+        patched = client.patch(
+            f"/api/channels/{quote(channel_name)}", json={"enabled": False}, headers=auth
+        )
         assert patched.status_code == 200
         listed = client.get("/api/channels", headers=auth).json()["channels"]
         assert listed[0]["enabled"] is False
         assert listed[0]["status"] == "disabled"
 
         # 停用后不能发送
-        blocked = client.post("/api/send", json={"channel": channel_id, "text": "hi"}, headers=auth)
+        blocked = client.post("/api/send", json={"channel": channel_name, "text": "hi"}, headers=auth)
         assert blocked.status_code == 409
         assert blocked.json()["error"]["code"] == "channel_disabled"
 
         # 启用回来
-        client.patch(f"/api/channels/{channel_id}", json={"enabled": True}, headers=auth)
-        detail = client.get(f"/api/channels/{channel_id}", headers=auth).json()["channel"]
+        client.patch(f"/api/channels/{channel_name}", json={"enabled": True}, headers=auth)
+        detail = client.get(f"/api/channels/{channel_name}", headers=auth).json()["channel"]
         assert detail["enabled"] is True
 
         # 删除
-        assert client.delete(f"/api/channels/{channel_id}", headers=auth).status_code == 200
+        assert client.delete(f"/api/channels/{channel_name}", headers=auth).status_code == 200
         assert client.get("/api/channels", headers=auth).json()["channels"] == []

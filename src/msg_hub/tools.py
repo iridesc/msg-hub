@@ -26,6 +26,7 @@ from .service import Hub
 # 服务器级说明（写给模型的用法指引），stdio 与 HTTP 两个前端共用
 INSTRUCTIONS = (
     "统一的消息路由中心：入口（持有 token 的调用方）→ 路由规则 → 出口（企业微信群机器人 / 邮箱）。\n"
+    "入口/出口/规则都用**名称**标识（没有 id），名称全局唯一，创建时重名会被拒绝。\n"
     "发消息时只给正文，**不要指定出口**：投递到哪些出口由服务端的路由规则决定。\n"
     "典型流程：1) channel_types 拿 settings_schema；2) channel_create 建出口并打上 tags；"
     "3) entry_create 建入口（拿到 token，只返回一次）并给它打 tags；"
@@ -96,7 +97,6 @@ class ToolSpec:
 
 
 # ── 参数片段（复用同一批定义，避免两处漂移）────────────────────
-_CHANNEL = {"anyOf": [{"type": "string"}, {"type": "integer"}]}
 _STRING = {"type": "string"}
 _OBJECT = {"type": "object"}
 _BOOL = {"type": "boolean"}
@@ -342,8 +342,8 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="channel_get",
-        description="查看单个出口详情（敏感字段已打码）。channel 可传 id（如 2）或名称。",
-        params=(Param("channel", _CHANNEL, "出口 id 或名称"),),
+        description="查看单个出口详情（敏感字段已打码）。channel 传出口名称。",
+        params=(Param("channel", _STRING, "出口名称"),),
         handler=_channel_get,
     ),
     ToolSpec(
@@ -371,7 +371,7 @@ TOOLS: tuple[ToolSpec, ...] = (
             "更换 type 时必须同时提供完整的 settings。"
         ),
         params=(
-            Param("channel", _CHANNEL, "出口 id 或名称"),
+            Param("channel", _STRING, "出口名称"),
             Param("name", _STRING, "新名称", None),
             Param("type", _STRING, "新类型（如同时给出完整 settings）", None),
             Param("settings", _OBJECT, "新的完整配置", None),
@@ -385,7 +385,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="channel_delete",
         description="删除出口（软删除，配置留档，可人工恢复）。",
-        params=(Param("channel", _CHANNEL, "出口 id 或名称"),),
+        params=(Param("channel", _STRING, "出口名称"),),
         handler=_channel_delete,
         admin_only=True,
     ),
@@ -417,7 +417,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="entry_update",
         description="修改入口：名称、标签、是否启用。不会更换 token。",
         params=(
-            Param("entry", _CHANNEL, "入口 id 或名称"),
+            Param("entry", _STRING, "入口名称"),
             Param("name", _STRING, "新名称", None),
             Param("tags", _TAGS, "新的标签集合（整体替换）", None),
             Param("enabled", _BOOL, "是否启用", None),
@@ -427,14 +427,14 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         name="entry_delete",
-        description="删除入口（该 token 立即失效）。",
-        params=(Param("entry", _CHANNEL, "入口 id 或名称"),),
+        description="删除入口（该 token 立即失效）。名称即标识，没有 id。",
+        params=(Param("entry", _STRING, "入口名称"),),
         handler=_entry_delete,
         admin_only=True,
     ),
     ToolSpec(
         name="rule_list",
-        description="列出所有路由规则（入口条件 + 出口条件）。",
+        description="列出所有路由规则（入口条件 + 出口条件）。规则用名称标识。",
         params=(),
         handler=_rule_list,
         admin_only=True,
@@ -459,7 +459,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="rule_update",
         description="修改规则：名称、入口条件、出口条件、是否启用。clear_entry=true 可清空入口条件。",
         params=(
-            Param("rule", _CHANNEL, "规则 id 或名称"),
+            Param("rule", _STRING, "规则名称"),
             Param("name", _STRING, "新名称", None),
             Param("outbound", _CONDITION, "新的出口条件", None),
             Param("entry", _CONDITION, "新的入口条件", None),
@@ -472,7 +472,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="rule_delete",
         description="删除路由规则。",
-        params=(Param("rule", _CHANNEL, "规则 id 或名称"),),
+        params=(Param("rule", _STRING, "规则名称"),),
         handler=_rule_delete,
         admin_only=True,
     ),
@@ -481,9 +481,9 @@ TOOLS: tuple[ToolSpec, ...] = (
         description=(
             "查看某个入口会投递到哪些出口（不发送）。返回命中的出口、命中的规则，"
             "以及每条规则的判定明细 trace，用来排查「为什么没发出去 / 为什么发到了这个群」。"
-            "entry 留空则按管理员视角（只有入口条件为空的规则会命中）。"
+            "entry 留空则按管理员视角（只有入口条件为空的规则会命中）。入口/出口都用名称。"
         ),
-        params=(Param("entry", _CHANNEL, "入口 id 或名称（留空=管理员视角）", None),),
+        params=(Param("entry", _STRING, "入口 id 或名称（留空=管理员视角）", None),),
         handler=_route_preview,
         admin_only=True,
     ),
@@ -497,7 +497,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         ),
         params=(
             Param("text", _STRING, "消息正文"),
-            Param("channel", _CHANNEL, "仅管理员：直连指定出口（入口身份传了会被拒绝）", None),
+            Param("channel", _STRING, "仅管理员：直连指定出口（入口身份传了会被拒绝）", None),
             Param("format", {**_STRING, "enum": ["plain", "markdown"]}, "正文格式", "plain"),
             Param("title", _STRING, "标题（邮件主题）", None),
             Param("mention_users", _MENTIONS, "@成员 userid 列表（也可只给单个）", None),
@@ -515,7 +515,7 @@ TOOLS: tuple[ToolSpec, ...] = (
             "这是管理员工具，不受路由规则影响。"
         ),
         params=(
-            Param("channel", _CHANNEL, "出口 id 或名称（测未保存配置时可留空）", ""),
+            Param("channel", _STRING, "出口名称（测未保存配置时可留空）", ""),
             Param("text", _STRING, "测试消息正文", "这是一条来自 msg-hub 的测试消息"),
             Param("dry_run", _BOOL, "只校验不真发", True),
             Param("settings", _OBJECT, "未保存的配置（临时配置测试）", None),
@@ -529,7 +529,7 @@ TOOLS: tuple[ToolSpec, ...] = (
         name="message_logs",
         description="查询发送审计日志（默认最近 50 条，可按出口过滤）。用来确认消息是否真的发出去了。",
         params=(
-            Param("channel", _CHANNEL, "出口 id 或名称（留空查全部）", None),
+            Param("channel", _STRING, "出口名称（留空查全部）", None),
             Param("limit", {"type": "integer"}, "返回条数（1-500）", 50),
         ),
         handler=_message_logs,

@@ -31,7 +31,7 @@ from .models import Channel, Condition, Entry, Rule
 def entry_candidates(entry: Entry, field_name: str) -> list[str]:
     """入口侧候选值：按 field 取对应集合。"""
     if field_name == "entry":
-        return [entry.name, str(entry.id)]
+        return [entry.name]
     return list(entry.tags)
 
 
@@ -81,7 +81,7 @@ def select(
 ) -> Selection:
     """跑一遍所有规则，返回命中的出口（含停用的，由调用方决定跳过）。"""
     result = Selection(total_rules=len(rules))
-    seen: set[int] = set()
+    seen: set[str] = set()
 
     for rule in rules:
         if not rule.enabled:
@@ -89,19 +89,18 @@ def select(
         result.enabled_rules += 1
         if not entry_matches(rule.entry, entry):
             continue
-        hit_ids = [c.id for c in channels if outbound_matches(rule.outbound, c)]
-        if not hit_ids:
+        hits = [c for c in channels if outbound_matches(rule.outbound, c)]
+        if not hits:
             continue
         result.matched_rules.append(
             {
-                "id": rule.id,
                 "name": rule.name,
-                "outbounds": hit_ids,
+                "outbounds": [c.name for c in hits],
             }
         )
-        for channel in channels:
-            if channel.id in hit_ids and channel.id not in seen:
-                seen.add(channel.id)
+        for channel in hits:
+            if channel.name not in seen:
+                seen.add(channel.name)
                 result.channels.append(channel)
 
     return result
@@ -119,13 +118,12 @@ def explain(
         hit = [c for c in channels if outbound_matches(rule.outbound, c)]
         trace.append(
             {
-                "id": rule.id,
                 "name": rule.name,
                 "enabled": rule.enabled,
                 "entry_condition": rule.entry.describe() if rule.entry else "（所有入口）",
                 "outbound_condition": rule.outbound.describe(),
                 "entry_matched": entry_ok,
-                "outbounds": [{"id": c.id, "name": c.name, "enabled": c.enabled} for c in hit],
+                "outbounds": [{"name": c.name, "type": c.type, "enabled": c.enabled} for c in hit],
                 "applied": bool(rule.enabled and entry_ok and hit),
             }
         )

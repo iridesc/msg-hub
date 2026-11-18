@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+from urllib.parse import quote
 import dataclasses
 
 from starlette.testclient import TestClient
@@ -50,7 +51,7 @@ def make_channel(client: TestClient, name: str = "工作群1", tags: list[str] |
             "tags": tags or [],
         },
         headers=admin(),
-    ).json()["channel"]["id"]
+    ).json()["channel"]["name"]
 
 
 def make_rule(
@@ -92,12 +93,12 @@ def test_entry_secret_is_always_readable(cfg):
         assert listed[0]["secret"] == entry["secret"]
         assert listed[0]["tags"] == ["app:pibox"]
 
-        detail = client.get(f"/api/entries/{entry['id']}", headers=admin()).json()["entry"]
+        detail = client.get(f"/api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
         assert detail["secret"] == entry["secret"]
 
         # 改了标签再读，token 不变
-        client.patch(f"/api/entries/{entry['id']}", json={"tags": ["app:x"]}, headers=admin())
-        again = client.get(f"/api/entries/{entry['id']}", headers=admin()).json()["entry"]
+        client.patch(f"/api/entries/{quote(entry['name'])}", json={"tags": ["app:x"]}, headers=admin())
+        again = client.get(f"/api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
         assert again["secret"] == entry["secret"]
 
 
@@ -118,14 +119,14 @@ def test_disable_and_delete_entry(cfg):
         ).status_code == 200
 
         # 停用后立刻 401
-        patched = client.patch(f"/api/entries/{entry['id']}", json={"enabled": False}, headers=admin())
+        patched = client.patch(f"/api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=admin())
         assert patched.status_code == 200
         assert client.post(
             "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 401
 
         # 删掉后同样失效
-        assert client.delete(f"/api/entries/{entry['id']}", headers=admin()).status_code == 200
+        assert client.delete(f"/api/entries/{quote(entry['name'])}", headers=admin()).status_code == 200
         assert client.post(
             "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 401
@@ -135,7 +136,7 @@ def test_entry_tags_can_be_updated(cfg):
     with make_client(cfg) as client:
         entry = make_entry(client, tags=["app:pibox"])
         renamed = client.patch(
-            f"/api/entries/{entry['id']}",
+            f"/api/entries/{quote(entry['name'])}",
             json={"name": "改名后的入口", "tags": ["app:pibox", "kind:alert"]},
             headers=admin(),
         ).json()["entry"]
@@ -260,7 +261,7 @@ def test_entry_cannot_read_its_own_secret(cfg):
         entry = make_entry(client)
         headers = bearer(entry["secret"])
         assert client.get("/api/entries", headers=headers).status_code == 403
-        assert client.get(f"/api/entries/{entry['id']}", headers=headers).status_code == 403
+        assert client.get(f"/api/entries/{quote(entry['name'])}", headers=headers).status_code == 403
 
 
 def test_unknown_bearer_is_unauthorized(cfg):

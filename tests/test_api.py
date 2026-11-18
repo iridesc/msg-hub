@@ -50,27 +50,30 @@ def test_channel_crud(cfg):
             json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
         )
         assert created.status_code == 201, created.text
-        channel_id = created.json()["channel"]["id"]
+        channel_name = created.json()["channel"]["name"]
 
         listed = client.get("/api/channels").json()["channels"]
         assert listed[0]["name"] == "工作群1"
         assert listed[0]["status"] == "ok"
 
-        patched = client.patch(f"/api/channels/{channel_id}", json={"name": "运维群"})
+        # 改名 = 换标识：旧名称从此不存在，后续必须用新名称寻址
+        patched = client.patch(f"/api/channels/{channel_name}", json={"name": "运维群"})
         assert patched.status_code == 200
         assert patched.json()["channel"]["name"] == "运维群"
+        assert client.get(f"/api/channels/{channel_name}").status_code == 404
+        channel_name = "运维群"
 
-        detail = client.get("/api/channels/运维群").json()["channel"]
-        assert detail["id"] == channel_id
+        detail = client.get(f"/api/channels/{channel_name}").json()["channel"]
+        assert detail["name"] == channel_name
         assert detail["settings"]["webhook_key"].startswith("***")
 
-        dry = client.post("/api/send", json={"channel": channel_id, "text": "hi", "dry_run": True})
+        dry = client.post("/api/send", json={"channel": channel_name, "text": "hi", "dry_run": True})
         assert dry.status_code == 200 and dry.json()["ok"] is True
 
-        logs = client.get("/api/logs", params={"channel": channel_id}).json()["logs"]
+        logs = client.get("/api/logs", params={"channel": channel_name}).json()["logs"]
         assert logs and logs[0]["dry_run"] is True
 
-        deleted = client.delete(f"/api/channels/{channel_id}")
+        deleted = client.delete(f"/api/channels/{channel_name}")
         assert deleted.status_code == 200
         assert client.get("/api/channels").json()["channels"] == []
 

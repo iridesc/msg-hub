@@ -147,14 +147,15 @@ def test_full_channel_lifecycle_over_stdio(tmp_path):
         )["result"]
         assert created["isError"] is False
         channel = json.loads(created["content"][0]["text"])
-        assert channel["id"] == 1
+        assert channel["name"] == "工作群1"
+        assert "id" not in channel
         assert channel["settings"]["webhook_key"] == "***6789"
 
         sent = client.call_tool("send_message", {"channel": "工作群1", "text": "hi", "dry_run": True})["result"]
         assert sent["isError"] is False
         assert json.loads(sent["content"][0]["text"])["ok"] is True
 
-        logs = client.call_tool("message_logs", {"channel": 1, "limit": 5})["result"]
+        logs = client.call_tool("message_logs", {"channel": "工作群1", "limit": 5})["result"]
         assert json.loads(logs["content"][0]["text"])["logs"][0]["dry_run"] is True
 
         # 参数缺 name → JSON-RPC 错误（-32602），而不是崩溃

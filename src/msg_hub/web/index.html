@@ -465,13 +465,13 @@ function condText(cond, side) {
 function renderEntries() {
   $("cnt-entries").textContent = ENTRIES.length;
   $("list-entries").innerHTML = ENTRIES.map((e) => `
-    <li class="item" data-entry="${e.id}">
+    <li class="item" data-entry="${esc(e.name)}">
       <div class="row">
         <span class="dot ${e.enabled ? "ok" : "disabled"}"></span>
         <span class="name">${esc(e.name)}</span>
         <span class="grow"></span>
         <label class="switch" title="启用/禁用">
-          <input type="checkbox" data-entry-toggle="${e.id}" ${e.enabled ? "checked" : ""}>
+          <input type="checkbox" data-entry-toggle="${esc(e.name)}" ${e.enabled ? "checked" : ""}>
           <span></span>
         </label>
       </div>
@@ -490,13 +490,13 @@ function renderEntries() {
 function renderRules() {
   $("cnt-rules").textContent = RULES.length;
   $("list-rules").innerHTML = RULES.map((r) => `
-    <li class="item" data-rule="${r.id}">
+    <li class="item" data-rule="${esc(r.name)}">
       <div class="row">
         <span class="dot ${r.enabled ? "ok" : "disabled"}"></span>
         <span class="name">${esc(r.name)}</span>
         <span class="grow"></span>
         <label class="switch" title="启用/停用">
-          <input type="checkbox" data-rule-toggle="${r.id}" ${r.enabled ? "checked" : ""}>
+          <input type="checkbox" data-rule-toggle="${esc(r.name)}" ${r.enabled ? "checked" : ""}>
           <span></span>
         </label>
       </div>
@@ -511,13 +511,13 @@ function renderRules() {
 function renderChannels() {
   $("cnt-channels").textContent = CHANNELS.length;
   $("list-channels").innerHTML = CHANNELS.map((c) => `
-    <li class="item" data-channel="${c.id}">
+    <li class="item" data-channel="${esc(c.name)}">
       <div class="row">
         <span class="dot ${c.status}"></span>
         <span class="name">${esc(c.name)}</span>
         <span class="grow"></span>
         <label class="switch" title="启用/停用">
-          <input type="checkbox" data-channel-toggle="${c.id}" ${c.enabled ? "checked" : ""}>
+          <input type="checkbox" data-channel-toggle="${esc(c.name)}" ${c.enabled ? "checked" : ""}>
           <span></span>
         </label>
       </div>
@@ -532,7 +532,7 @@ function renderChannels() {
   const select = $("log-filter");
   const current = LOG_FILTER;
   select.innerHTML = `<option value="">全部出口</option>` + CHANNELS.map((c) =>
-    `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+    `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
   select.value = current;
 }
 
@@ -540,7 +540,7 @@ function renderChannels() {
 function actorLabel(actor) {
   if (!actor) return `<span class="muted">—</span>`;
   if (actor.type === "admin") return `<span class="tag">管理员</span>`;
-  return `<span class="tag" title="entry #${esc(actor.id)} ${esc(actor.prefix || "")}">${esc(actor.name || "entry")}</span>`;
+  return `<span class="tag" title="${esc(actor.prefix || "")}">${esc(actor.name || "entry")}</span>`;
 }
 
 function ruleChips(record) {
@@ -550,14 +550,14 @@ function ruleChips(record) {
     return `<span class="muted">${record.routed === false ? "直连" : "—"}</span>`;
   }
   return rules.map((rule, index) =>
-    `<span class="tag hl" title="规则 #${esc(rule.id)}">${esc(rule.name)}</span>`
+    `<span class="tag hl">${esc(rule.name)}</span>`
       + (index < rules.length - 1 ? " " : "")).join("");
 }
 
 function renderLogs() {
   const records = LOG_FILTER === ""
     ? LOGS
-    : LOGS.filter((r) => String((r.channel || {}).id) === String(LOG_FILTER));
+    : LOGS.filter((r) => (r.channel || {}).name === LOG_FILTER);
   $("log-sub").textContent = `最近 ${records.length} 条`;
   $("logs").innerHTML = records.map((r) => {
     const info = r.channel || {};
@@ -612,7 +612,7 @@ async function refresh() {
 let EDIT_ENTRY = null;
 
 function openEntryModal(entry) {
-  EDIT_ENTRY = entry ? entry.id : null;
+  EDIT_ENTRY = entry ? entry.name : null;
   $("entry-title").textContent = entry ? "编辑入口" : "新增入口";
   $("e-name").value = entry ? entry.name : "";
   $("e-tags").value = entry ? (entry.tags || []).join(",") : "";
@@ -639,7 +639,7 @@ async function submitEntry() {
       showSecret(data.entry);
     } else {
       payload.enabled = $("e-enabled").checked;
-      await api("/api/entries/" + EDIT_ENTRY, { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/api/entries/" + encodeURIComponent(EDIT_ENTRY), { method: "PATCH", body: JSON.stringify(payload) });
       hide("entry-modal");
       toast("已保存");
     }
@@ -672,7 +672,7 @@ function condCandidates(side, field) {
   const out = [];
   if (side === "entry") {
     for (const entry of ENTRIES) {
-      if (field === "entry") out.push(entry.name, entry.id);
+      if (field === "entry") out.push(entry.name);
       else out.push(...(entry.tags || []));
     }
   } else {
@@ -702,7 +702,7 @@ function syncCondEnabled() {
 }
 
 function openRuleModal(rule) {
-  EDIT_RULE = rule ? rule.id : null;
+  EDIT_RULE = rule ? rule.name : null;
   $("rule-title").textContent = rule ? "编辑规则" : "新建规则";
   $("r-name").value = rule ? rule.name : "";
   const entry = rule && rule.entry;
@@ -747,7 +747,7 @@ async function submitRule() {
     } else {
       payload.clear_entry = !entryField;
       payload.enabled = $("r-enabled").checked;
-      await api("/api/rules/" + EDIT_RULE, { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/api/rules/" + encodeURIComponent(EDIT_RULE), { method: "PATCH", body: JSON.stringify(payload) });
       toast("已保存");
     }
     hide("rule-modal");
@@ -813,7 +813,7 @@ async function openChannelModal(channel) {
   if (!TYPES.length) {
     try { TYPES = (await api("/api/types")).types; } catch (err) { toast(err.message, true); }
   }
-  EDIT_CHANNEL = channel ? channel.id : null;
+  EDIT_CHANNEL = channel ? channel.name : null;
   const editing = Boolean(channel);
   $("channel-title").textContent = editing ? "编辑出口" : "添加出口";
   $("c-type").innerHTML = TYPES.map((t) =>
@@ -864,7 +864,7 @@ async function submitChannel() {
       await api("/api/channels", { method: "POST", body: JSON.stringify(payload) });
       toast("出口已创建");
     } else {
-      await api("/api/channels/" + EDIT_CHANNEL, { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/api/channels/" + encodeURIComponent(EDIT_CHANNEL), { method: "PATCH", body: JSON.stringify(payload) });
       toast("已保存");
     }
     hide("channel-modal");
@@ -883,7 +883,7 @@ async function submitChannel() {
 async function removeEntry(entry) {
   if (!confirm(`删除入口「${entry.name}」？用这把 token 的系统会立刻发不出消息。`)) return;
   try {
-    await api("/api/entries/" + entry.id, { method: "DELETE" });
+    await api("/api/entries/" + encodeURIComponent(entry.name), { method: "DELETE" });
     hide("entry-modal");
     toast("已删除");
     await refresh();
@@ -893,7 +893,7 @@ async function removeEntry(entry) {
 async function removeRule(rule) {
   if (!confirm(`删除规则「${rule.name}」？`)) return;
   try {
-    await api("/api/rules/" + rule.id, { method: "DELETE" });
+    await api("/api/rules/" + encodeURIComponent(rule.name), { method: "DELETE" });
     hide("rule-modal");
     toast("已删除");
     await refresh();
@@ -903,7 +903,7 @@ async function removeRule(rule) {
 async function removeChannel(channel) {
   if (!confirm(`删除出口「${channel.name}」？配置会留档，可人工恢复。`)) return;
   try {
-    await api("/api/channels/" + channel.id, { method: "DELETE" });
+    await api("/api/channels/" + encodeURIComponent(channel.name), { method: "DELETE" });
     hide("channel-modal");
     toast("已删除");
     await refresh();
@@ -914,7 +914,7 @@ async function removeChannel(channel) {
 function openPreview() {
   if (ENTRIES.length) {
     $("p-entry").innerHTML = ENTRIES.map(
-      (e) => `<option value="${e.id}">#${e.id} ${esc(e.name)}</option>`).join("");
+      (e) => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join("");
     $("p-run").disabled = false;
     $("p-result").innerHTML = `<div class="muted">选一个入口，点「测试」看会投递到哪些出口。</div>`;
   } else {
@@ -939,9 +939,8 @@ async function runPreview() {
 
     // 1. 命中的规则
     const rulesHtml = applied.length
-      ? `<table><thead><tr><th>#</th><th>规则</th><th>入口条件</th><th>出口条件</th></tr></thead><tbody>`
+      ? `<table><thead><tr><th>规则</th><th>入口条件</th><th>出口条件</th></tr></thead><tbody>`
         + applied.map((t) => `<tr>
-            <td class="muted">${t.id}</td>
             <td>${esc(t.name)}</td>
             <td class="cond">${esc(t.entry_condition)}</td>
             <td class="cond">${esc(t.outbound_condition)}</td>
@@ -951,9 +950,8 @@ async function runPreview() {
 
     // 2. 最终出口
     const outHtml = outs.length
-      ? `<table><thead><tr><th>#</th><th>出口</th><th>类型</th><th>标签</th><th>状态</th></tr></thead><tbody>`
+      ? `<table><thead><tr><th>出口</th><th>类型</th><th>标签</th><th>状态</th></tr></thead><tbody>`
         + outs.map((c) => `<tr>
-            <td class="muted">${c.id}</td>
             <td>${esc(c.name)}</td>
             <td class="muted">${esc(c.type)}</td>
             <td>${tagList(c.tags)}</td>
@@ -968,9 +966,8 @@ async function runPreview() {
     const skippedHtml = skipped.length
       ? `<details style="margin-top:12px">
            <summary class="muted" style="cursor:pointer">未命中的规则（${skipped.length} 条）</summary>
-           <table style="margin-top:8px"><thead><tr><th>#</th><th>规则</th><th>入口条件</th><th>出口条件</th><th>原因</th></tr></thead><tbody>`
+           <table style="margin-top:8px"><thead><tr><th>规则</th><th>入口条件</th><th>出口条件</th><th>原因</th></tr></thead><tbody>`
         + skipped.map((t) => `<tr>
-            <td class="muted">${t.id}</td>
             <td>${esc(t.name)}</td>
             <td class="cond">${esc(t.entry_condition)}</td>
             <td class="cond">${esc(t.outbound_condition)}</td>
@@ -1013,21 +1010,21 @@ $("r-outbound-field").onchange = () => refreshCondCandidates();
 $("e-cancel").onclick = () => hide("entry-modal");
 $("e-submit").onclick = () => submitEntry();
 $("e-delete").onclick = () => {
-  const entry = ENTRIES.find((e) => e.id === EDIT_ENTRY);
+  const entry = ENTRIES.find((e) => e.name === EDIT_ENTRY);
   if (entry) removeEntry(entry);
 };
 
 $("r-cancel").onclick = () => hide("rule-modal");
 $("r-submit").onclick = () => submitRule();
 $("r-delete").onclick = () => {
-  const rule = RULES.find((r) => r.id === EDIT_RULE);
+  const rule = RULES.find((r) => r.name === EDIT_RULE);
   if (rule) removeRule(rule);
 };
 
 $("c-cancel").onclick = () => hide("channel-modal");
 $("c-submit").onclick = () => submitChannel();
 $("c-delete").onclick = () => {
-  const channel = CHANNELS.find((c) => c.id === EDIT_CHANNEL);
+  const channel = CHANNELS.find((c) => c.name === EDIT_CHANNEL);
   if (channel) removeChannel(channel);
 };
 $("c-rewrite").onchange = () => {
@@ -1061,8 +1058,8 @@ function bindRowClick(listId, lookup, opener) {
     if (event.target.closest("label.switch, [data-copy]")) return;
     const item = event.target.closest("li.item");
     if (!item) return;
-    const id = Number(Object.values(item.dataset)[0]);
-    const target = lookup().find((x) => x.id === id);
+    const name = Object.values(item.dataset)[0];
+    const target = lookup().find((x) => x.name === name);
     if (target) opener(target);
   };
 }
@@ -1070,9 +1067,9 @@ bindRowClick("list-entries", () => ENTRIES, openEntryModal);
 bindRowClick("list-rules", () => RULES, openRuleModal);
 bindRowClick("list-channels", () => CHANNELS, openChannelModal);
 
-async function toggle(kind, id, enabled) {
+async function toggle(kind, name, enabled) {
   try {
-    await api(`/api/${kind}/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+    await api(`/api/${kind}/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
     toast(enabled ? "已启用" : "已停用");
     await refresh();
   } catch (err) { toast(err.message, true); }

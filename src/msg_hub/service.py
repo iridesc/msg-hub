@@ -46,7 +46,7 @@ class Hub:
         self.registry = registry or Registry(settings)
         self.audit = Audit(settings)
         self._rate_lock = threading.Lock()
-        self._rate: dict[int, deque[float]] = {}
+        self._rate: dict[str, deque[float]] = {}
 
     # ── 类型 ────────────────────────────────────────────
     def types(self) -> list[dict[str, Any]]:
@@ -70,7 +70,6 @@ class Hub:
     def _describe(self, channel: Channel) -> dict[str, Any]:
         status, detail = self.channel_status(channel)
         data: dict[str, Any] = {
-            "id": channel.id,
             "name": channel.name,
             "type": channel.type,
             "enabled": channel.enabled,
@@ -87,13 +86,7 @@ class Hub:
         return [self._describe(channel) for channel in self.store.channels(include_deleted=include_deleted)]
 
     def resolve(self, ref: int | str) -> Channel:
-        """按 id 或名称寻址；名称模糊匹配到多个时报错并给候选，绝不猜。"""
-        if isinstance(ref, int) or (isinstance(ref, str) and ref.strip().isdigit()):
-            try:
-                return self.store.get(int(ref))
-            except HubError:
-                # id 不存在时再按名称找一次（渠道名可能恰好是纯数字）
-                pass
+        """按名称寻址（没有 id）；精确未命中时做唯一子串匹配，多个命中就报错绝不猜。"""
         name = str(ref).strip()
         if not name:
             raise HubError("invalid_argument", "channel 不能为空")
@@ -104,8 +97,8 @@ class Hub:
         if len(exact) > 1:
             raise HubError(
                 "ambiguous",
-                f"名称 {name} 匹配到多个渠道，请改用 id",
-                candidates=[{"id": c.id, "name": c.name} for c in exact],
+                f"名称 {name} 匹配到多个出口，请写全名",
+                candidates=[{"name": c.name} for c in exact],
             )
         partial = [c for c in channels if name.casefold() in c.name.casefold()]
         if len(partial) == 1:
@@ -113,11 +106,11 @@ class Hub:
         if len(partial) > 1:
             raise HubError(
                 "ambiguous",
-                f"{name} 匹配到多个渠道，请改用 id 指定",
-                candidates=[{"id": c.id, "name": c.name} for c in partial],
+                f"{name} 匹配到多个出口，请写全名",
+                candidates=[{"name": c.name} for c in partial],
             )
-        available = [{"id": c.id, "name": c.name, "type": c.type} for c in channels]
-        raise HubError("not_found", f"渠道 {name} 不存在", available=available)
+        available = [{"name": c.name, "type": c.type} for c in channels]
+        raise HubError("not_found", f"出口 {name} 不存在", available=available)
 
     def get_channel(self, ref: int | str) -> dict[str, Any]:
         channel = self.resolve(ref)
@@ -154,7 +147,6 @@ class Hub:
         # 元信息与凭据在同一个对象里：一次写入 = 原子落盘，不需要回滚
         channel = self.store.insert(
             Channel(
-                id=0,
                 name=name,
                 type=manifest.type,
                 enabled=enabled,
@@ -163,7 +155,7 @@ class Hub:
                 tags=normalize_tags(tags),
             )
         )
-        return self.get_channel(channel.id)
+        return self.get_channel(channel.name)
 
     def update_channel(
         self,
@@ -177,6 +169,7 @@ class Hub:
         tags: list[str] | str | None = None,
     ) -> dict[str, Any]:
         channel = self.resolve(ref)
+        old_name = channel.name
         target_type = str(type_name) if type_name else channel.type
         manifest = self.registry.get(target_type)
 
@@ -195,35 +188,34 @@ class Hub:
             channel.tags = normalize_tags(tags)
         if enabled is not None:
             channel.enabled = bool(enabled)
-        self.store.replace(channel)
-        return self.get_channel(channel.id)
+        self.store.replace(old_name, channel)
+        return self.get_channel(channel.name)
 
     def delete_channel(self, ref: int | str) -> dict[str, Any]:
         channel = self.resolve(ref)
-        deleted = self.store.soft_delete(channel.id)
+        deleted = self.store.soft_delete(channel.name)
         with self._rate_lock:
-            self._rate.pop(deleted.id, None)
-        return {"ok": True, "deleted": {"id": deleted.id, "name": deleted.name, "type": deleted.type}}
+            self._rate.pop(deleted.name, None)
+        return {"ok": True, "deleted": {"name": deleted.name, "type": deleted.type}}
 
     # ── 入口 ────────────────────────────────────────────
     def list_entries(self) -> list[dict[str, Any]]:
         return [entry.to_public() for entry in self.store.entries()]
 
     def resolve_entry(self, ref: int | str) -> Entry:
-        if isinstance(ref, int) or (isinstance(ref, str) and ref.strip().isdigit()):
-            try:
-                return self.store.get_entry(int(ref))
-            except HubError:
-                pass
         name = str(ref).strip()
         if not name:
             raise HubError("invalid_argument", "entry 不能为空")
         entries = self.store.entries()
-        exact = [e for e in entries if e.name.casefold() == name.casefold()]
-        if len(exact) == 1:
-            return exact[0]
-        available = [{"id": e.id, "name": e.name} for e in entries]
-        raise HubError("not_found", f"入口 {name} 不存在", available=available)
+        for entry in entries:
+            if entry.name == name:
+                return entry
+        for entry in entries:
+            if entry.name.casefold() == name.casefold():
+                return entry
+        raise HubError(
+            "not_found", f"入口 {name} 不存在", available=[{"name": e.name} for e in entries]
+        )
 
     def get_entry(self, ref: int | str) -> dict[str, Any]:
         return self.resolve_entry(ref).to_public()
@@ -250,6 +242,7 @@ class Hub:
         enabled: bool | None = None,
     ) -> dict[str, Any]:
         entry = self.resolve_entry(ref)
+        old_name = entry.name
         if name is not None:
             entry.name = str(name).strip()
             if not entry.name:
@@ -258,32 +251,28 @@ class Hub:
             entry.tags = normalize_tags(tags)
         if enabled is not None:
             entry.enabled = bool(enabled)
-        return self.store.replace_entry(entry).to_public()
+        return self.store.replace_entry(old_name, entry).to_public()
 
     def delete_entry(self, ref: int | str) -> dict[str, Any]:
         entry = self.resolve_entry(ref)
-        deleted = self.store.delete_entry(entry.id)
-        return {"ok": True, "deleted": {"id": deleted.id, "name": deleted.name}}
+        deleted = self.store.delete_entry(entry.name)
+        return {"ok": True, "deleted": {"name": deleted.name}}
 
     # ── 路由规则 ────────────────────────────────────────
     def list_rules(self) -> list[dict[str, Any]]:
         return [rule.to_dict() for rule in self.store.rules()]
 
     def resolve_rule(self, ref: int | str) -> Rule:
-        if isinstance(ref, int) or (isinstance(ref, str) and str(ref).strip().isdigit()):
-            try:
-                return self.store.get_rule(int(ref))
-            except HubError:
-                pass
         name = str(ref).strip()
         rules = self.store.rules()
-        exact = [r for r in rules if r.name.casefold() == name.casefold()]
-        if len(exact) == 1:
-            return exact[0]
+        for rule in rules:
+            if rule.name == name:
+                return rule
+        for rule in rules:
+            if rule.name.casefold() == name.casefold():
+                return rule
         raise HubError(
-            "not_found",
-            f"规则 {name} 不存在",
-            available=[{"id": r.id, "name": r.name} for r in rules],
+            "not_found", f"规则 {name} 不存在", available=[{"name": r.name} for r in rules]
         )
 
     def get_rule(self, ref: int | str) -> dict[str, Any]:
@@ -304,7 +293,6 @@ class Hub:
         if not name:
             raise HubError("invalid_argument", "规则名称不能为空")
         rule = Rule(
-            id=0,
             name=name,
             entry=self._condition(entry, side="entry") if entry else None,
             outbound=self._condition(outbound, side="outbound"),
@@ -323,6 +311,7 @@ class Hub:
         enabled: bool | None = None,
     ) -> dict[str, Any]:
         rule = self.resolve_rule(ref)
+        old_name = rule.name
         if name is not None:
             rule.name = str(name).strip()
         if outbound is not None:
@@ -333,12 +322,12 @@ class Hub:
             rule.entry = self._condition(entry, side="entry")
         if enabled is not None:
             rule.enabled = bool(enabled)
-        return self.store.replace_rule(rule).to_dict()
+        return self.store.replace_rule(old_name, rule).to_dict()
 
     def delete_rule(self, ref: int | str) -> dict[str, Any]:
         rule = self.resolve_rule(ref)
-        deleted = self.store.delete_rule(rule.id)
-        return {"ok": True, "deleted": {"id": deleted.id, "name": deleted.name}}
+        deleted = self.store.delete_rule(rule.name)
+        return {"ok": True, "deleted": {"name": deleted.name}}
 
     def route_preview(self, entry_ref: int | str | None = None) -> dict[str, Any]:
         """给定入口，看看会发到哪些出口（不发送）。"""
@@ -371,14 +360,14 @@ class Hub:
             return
         now = time.monotonic()
         with self._rate_lock:
-            bucket = self._rate.setdefault(channel.id, deque())
+            bucket = self._rate.setdefault(channel.name, deque())
             while bucket and now - bucket[0] > 60:
                 bucket.popleft()
             if len(bucket) >= limit:
                 wait = 60 - (now - bucket[0])
                 raise HubError(
                     "rate_limited",
-                    f"渠道 {channel.name} 超出频率限制（{limit} 条/分钟），请 {wait:.0f}s 后重试",
+                    f"出口 {channel.name} 超出频率限制（{limit} 条/分钟），请 {wait:.0f}s 后重试",
                     limit_per_min=limit,
                     retry_after_seconds=round(wait, 1),
                 )
@@ -450,10 +439,10 @@ class Hub:
         try:
             status, detail = self.channel_status(channel)
             if status == "disabled":
-                raise HubError("channel_disabled", f"渠道 {channel.name} 已停用")
+                raise HubError("channel_disabled", f"出口 {channel.name} 已停用")
             if status == "broken":
                 raise HubError(
-                    "channel_broken", f"渠道 {channel.name} 不可用：{detail}", channel_id=channel.id
+                    "channel_broken", f"出口 {channel.name} 不可用：{detail}", name=channel.name
                 )
             manifest = self.registry.get(channel.type)
             prepared = self._validate_message(
@@ -532,17 +521,17 @@ class Hub:
     def _rules_for(channel: Channel, matched: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """从命中规则里挑出「真正选中了这个出口」的那些（日志按出口一行）。"""
         return [
-            {"id": rule["id"], "name": rule["name"]}
+            {"name": rule["name"]}
             for rule in matched
-            if channel.id in (rule.get("outbounds") or [])
+            if channel.name in (rule.get("outbounds") or [])
         ]
 
     def _identity_entry(self, identity: Identity) -> Entry | None:
         """把当前身份翻译成入口对象（管理员返回 None）。"""
-        if identity.is_admin or identity.entry_id is None:
+        if identity.is_admin or not identity.entry_name:
             return None
         try:
-            return self.store.get_entry(int(identity.entry_id))
+            return self.store.get_entry(identity.entry_name)
         except HubError:
             return None
 
@@ -608,7 +597,7 @@ class Hub:
                     total_rules=selection.total_rules,
                     enabled_rules=selection.enabled_rules,
                     available_channels=[
-                        {"id": c.id, "name": c.name, "type": c.type, "tags": c.tags, "enabled": c.enabled}
+                        {"name": c.name, "type": c.type, "tags": c.tags, "enabled": c.enabled}
                         for c in channels
                     ],
                 )
@@ -700,7 +689,7 @@ class Hub:
         options = dict(options_override or {})
         request_id = uuid.uuid4().hex[:12]
         message = Message(text=text)
-        info = {"id": 0, "name": "(未保存的配置)", "type": manifest.type}
+        info = {"name": "(未保存的配置)", "type": manifest.type}
         try:
             result = self.registry.invoke(
                 manifest,
@@ -721,7 +710,7 @@ class Hub:
 
     @staticmethod
     def _info(channel: Channel) -> dict[str, Any]:
-        return {"id": channel.id, "name": channel.name, "type": channel.type}
+        return {"name": channel.name, "type": channel.type}
 
     def _record(
         self,
@@ -774,7 +763,7 @@ class Hub:
 
     # ── 日志 ────────────────────────────────────────────
     def logs(self, channel_ref: int | str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        channel_id = None
+        channel_name = None
         if channel_ref not in (None, ""):
-            channel_id = self.resolve(channel_ref).id
-        return self.audit.query(channel_id=channel_id, limit=limit)
+            channel_name = self.resolve(channel_ref).name
+        return self.audit.query(channel_name=channel_name, limit=limit)

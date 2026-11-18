@@ -35,7 +35,6 @@ class Identity:
     """当前调用者：管理员，或某个入口（Entry）。"""
 
     role: Literal["admin", "entry"] = ADMIN
-    entry_id: int | None = None
     entry_name: str | None = None
     entry_prefix: str | None = field(default=None)
     entry_tags: tuple[str, ...] = ()
@@ -50,7 +49,6 @@ class Identity:
             return {"type": ADMIN}
         return {
             "type": ENTRY,
-            "id": self.entry_id,
             "name": self.entry_name,
             "prefix": self.entry_prefix,
         }
@@ -58,7 +56,7 @@ class Identity:
     def describe(self) -> str:
         if self.is_admin:
             return "管理员"
-        return f"入口#{self.entry_id} {self.entry_name or ''} {self.entry_prefix or ''}".strip()
+        return f"入口「{self.entry_name or ''}」{self.entry_prefix or ''}".strip()
 
 
 ADMIN_IDENTITY = Identity(role=ADMIN)

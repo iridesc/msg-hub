@@ -75,10 +75,10 @@ def summarize_sends(hub: Hub, limit: int = 500) -> dict[str, Any]:
     by_channel: dict[Any, dict[str, Any]] = {}
     for record in records:
         info = record.get("channel") or {}
-        channel_id = info.get("id")
+        channel_name = info.get("name")
         item = by_channel.setdefault(
-            channel_id,
-            {"id": channel_id, "name": info.get("name") or "(未知)", "ok": 0, "failed": 0},
+            channel_name,
+            {"name": channel_name or "(未知)", "ok": 0, "failed": 0},
         )
         if record.get("ok"):
             item["ok"] += 1

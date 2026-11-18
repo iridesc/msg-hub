@@ -12,7 +12,7 @@
            {
              "version": 2,            # v2：配置改走 stdin，不再传 --config 路径
              "request_id": "...",
-             "channel": {"id": 1, "name": "工作群1", "type": "wecom_bot"},
+             "channel": {"name": "工作群1", "type": "wecom_bot"},
              "settings": {...},       # 该类型的配置（凭据），已过 schema 校验
              "message": {"text": "...", "format": "plain|markdown", "title": null,
                          "mention_users": [], "mention_mobiles": [], "mention_all": false},

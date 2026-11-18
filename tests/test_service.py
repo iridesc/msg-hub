@@ -15,7 +15,8 @@ def _create_wecom(hub, name="工作群1", **options):
 
 def test_create_and_describe(hub):
     channel = _create_wecom(hub)
-    assert channel["id"] == 1
+    assert channel["name"] == "工作群1"
+    assert "id" not in channel
     assert channel["status"] == "ok"
     assert channel["settings"]["webhook_key"] == "***defg"
 
@@ -27,16 +28,16 @@ def test_duplicate_name(hub):
     assert exc.value.code == "invalid_argument"
 
 
-def test_numeric_name_falls_back_to_name_lookup(hub):
-    """渠道名恰好是纯数字时，id 查不到要回退到按名称找，而不是直接 not_found。"""
+def test_numeric_name_is_a_normal_name(hub):
+    """名称是唯一标识，纯数字名称照常能寻址（不再有 id 回退那套）。"""
     channel = hub.create_channel(name="2024", type_name="wecom_bot", settings=dict(WECOM_SETTINGS))
-    assert hub.resolve("2024").id == channel["id"]
+    assert hub.resolve("2024").name == channel["name"]
 
 
 def test_too_long_text_has_dedicated_error_code(hub):
     channel = _create_wecom(hub)
     with pytest.raises(HubError) as exc:
-        hub.send("啊" * 20001, channel=channel["id"], dry_run=True)
+        hub.send("啊" * 20001, channel=channel["name"], dry_run=True)
     assert exc.value.code == "text_too_long"
 
 
@@ -55,16 +56,17 @@ def test_audit_failure_does_not_break_a_successful_send(hub, mock_wecom, monkeyp
         raise OSError("磁盘满了")
 
     monkeypatch.setattr(hub.audit, "append", boom)
-    result = hub.send("hi", channel=channel["id"])
+    result = hub.send("hi", channel=channel["name"])
     assert result["ok"] is True
     assert mock_wecom.requests
 
 
-def test_resolve_by_id_and_name(hub):
+def test_resolve_by_name(hub):
     created = _create_wecom(hub)
-    assert hub.resolve(created["id"]).name == "工作群1"
-    assert hub.resolve("工作群1").id == created["id"]
-    assert hub.resolve("作群").id == created["id"]  # 唯一子串命中
+    assert hub.resolve("工作群1").name == created["name"]
+    assert hub.resolve("工作群1").name == created["name"]      # 精确
+    assert hub.resolve("作群").name == created["name"]         # 唯一子串命中
+    assert hub.resolve(" 工作群1 ").name == created["name"]    # 去空白
 
 
 def test_ambiguous_name_is_rejected(hub):
@@ -94,11 +96,11 @@ def test_broken_when_settings_invalid(hub):
     state["channels"][0]["settings"] = {}  # 缺 webhook_key
     hub.settings.state_path.write_text(json.dumps(state), encoding="utf-8")
 
-    status, detail = hub.channel_status(hub.resolve(channel["id"]))
+    status, detail = hub.channel_status(hub.resolve(channel["name"]))
     assert status == "broken"
     assert "webhook" in detail
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"])
+        hub.send("hi", channel=channel["name"])
     assert exc.value.code == "channel_broken"
 
 
@@ -111,33 +113,33 @@ def test_broken_when_type_unknown(hub):
     state["channels"][0]["type"] = "不存在的类型"
     hub.settings.state_path.write_text(json.dumps(state), encoding="utf-8")
 
-    status, _detail = hub.channel_status(hub.resolve(channel["id"]))
+    status, _detail = hub.channel_status(hub.resolve(channel["name"]))
     assert status == "broken"
 
 
 def test_disabled_channel_cannot_send(hub):
     channel = _create_wecom(hub)
-    hub.update_channel(channel["id"], enabled=False)
+    hub.update_channel(channel["name"], enabled=False)
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"])
+        hub.send("hi", channel=channel["name"])
     assert exc.value.code == "channel_disabled"
 
 
 def test_mention_all_guard(hub):
     channel = _create_wecom(hub)
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"], mention_all=True, dry_run=True)
+        hub.send("hi", channel=channel["name"], mention_all=True, dry_run=True)
     assert exc.value.code == "mention_all_denied"
 
-    hub.update_channel(channel["id"], options={"allow_mention_all": True})
-    result = hub.send("hi", channel=channel["id"], mention_all=True, dry_run=True)
+    hub.update_channel(channel["name"], options={"allow_mention_all": True})
+    result = hub.send("hi", channel=channel["name"], mention_all=True, dry_run=True)
     assert result["ok"]
 
 
 def test_format_must_be_supported(hub):
     channel = _create_wecom(hub)
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"], format="html", dry_run=True)
+        hub.send("hi", channel=channel["name"], format="html", dry_run=True)
     assert exc.value.code == "invalid_argument"
 
 
@@ -148,10 +150,10 @@ def test_rate_limit(hub, mock_wecom):
         settings={"webhook_url": f"{mock_wecom.base_url}/cgi-bin/webhook/send?key=abc123456"},
         options={"rate_limit_per_min": 2},
     )
-    hub.send("1", channel=channel["id"])
-    hub.send("2", channel=channel["id"])
+    hub.send("1", channel=channel["name"])
+    hub.send("2", channel=channel["name"])
     with pytest.raises(HubError) as exc:
-        hub.send("3", channel=channel["id"])
+        hub.send("3", channel=channel["name"])
     assert exc.value.code == "rate_limited"
     assert exc.value.retryable is True
 
@@ -168,10 +170,10 @@ def test_dry_run_does_not_consume_quota(hub, mock_wecom):
         options={"rate_limit_per_min": 1},
     )
     for index in range(5):
-        hub.send(f"dry {index}", channel=channel["id"], dry_run=True)
-    assert hub.send("真发", channel=channel["id"])["ok"] is True
+        hub.send(f"dry {index}", channel=channel["name"], dry_run=True)
+    assert hub.send("真发", channel=channel["name"])["ok"] is True
     with pytest.raises(HubError) as exc:
-        hub.send("再来一条", channel=channel["id"])
+        hub.send("再来一条", channel=channel["name"])
     assert exc.value.code == "rate_limited"
 
 
@@ -181,7 +183,7 @@ def test_real_send_to_mock_wecom(hub, mock_wecom):
         type_name="wecom_bot",
         settings={"webhook_url": f"{mock_wecom.base_url}/cgi-bin/webhook/send?key=abc123456"},
     )
-    result = hub.send("线上告警：CPU 95%", channel=channel["id"], mention_users=["zhangsan"])
+    result = hub.send("线上告警：CPU 95%", channel=channel["name"], mention_users=["zhangsan"])
     assert result["ok"] is True
 
     request = mock_wecom.last
@@ -204,7 +206,7 @@ def test_real_send_error_mapping(hub, mock_wecom):
         settings={"webhook_url": f"{mock_wecom.base_url}/send?key=bad"},
     )
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"])
+        hub.send("hi", channel=channel["name"])
     assert exc.value.code == "send_failed"
     assert exc.value.retryable is False
     assert "93000" in exc.value.message
@@ -220,7 +222,7 @@ def test_markdown_mention_uses_inline_syntax(hub, mock_wecom):
         type_name="wecom_bot",
         settings={"webhook_url": f"{mock_wecom.base_url}/send?key=k"},
     )
-    hub.send("**告警**", channel=channel["id"], format="markdown", mention_users=["lisi"])
+    hub.send("**告警**", channel=channel["name"], format="markdown", mention_users=["lisi"])
     payload = mock_wecom.last["json"]
     assert payload["msgtype"] == "markdown"
     assert "<@lisi>" in payload["markdown"]["content"]
@@ -228,7 +230,7 @@ def test_markdown_mention_uses_inline_syntax(hub, mock_wecom):
 
 def test_audit_log_written_as_jsonl(hub, cfg):
     channel = _create_wecom(hub)
-    hub.send("审计一下", channel=channel["id"], dry_run=True)
+    hub.send("审计一下", channel=channel["name"], dry_run=True)
     files = list(cfg.log_dir.glob("*.jsonl"))
     assert len(files) == 1
     record = json.loads(files[0].read_text().strip())
@@ -245,13 +247,13 @@ def test_retryable_semantics_propagates_from_plugin(hub, mock_wecom):
     )
     mock_wecom.status = 500
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"])
+        hub.send("hi", channel=channel["name"])
     assert exc.value.retryable is True
 
     mock_wecom.status = 200
     mock_wecom.body = {"errcode": 45009, "errmsg": "api freq out of limit"}
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["id"])
+        hub.send("hi", channel=channel["name"])
     assert exc.value.retryable is True  # 企微限流 45009 可重试
 
 
@@ -267,6 +269,6 @@ def test_plugin_ignores_ambient_proxy_env(hub, mock_wecom, monkeypatch):
         type_name="wecom_bot",
         settings={"webhook_url": f"{mock_wecom.base_url}/send?key=k"},
     )
-    result = hub.send("应当绕过环境代理", channel=channel["id"])
+    result = hub.send("应当绕过环境代理", channel=channel["name"])
     assert result["ok"] is True
     assert mock_wecom.last["json"]["text"]["content"] == "应当绕过环境代理"

@@ -77,7 +77,7 @@ async def test_mention_param_accepts_single_string(hub):
     )
     result = await mcp.call_tool(
         "send_message",
-        {"channel": 1, "text": "hi", "mention_users": "zhangsan", "dry_run": True},
+        {"channel": "工作群1", "text": "hi", "mention_users": "zhangsan", "dry_run": True},
     )
     assert _data(result)["ok"] is True
 
@@ -98,15 +98,16 @@ async def test_create_send_and_delete_via_mcp(cfg, hub):
         {"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
     )
     channel = _data(created)
-    assert channel["id"] == 1
+    assert channel["name"] == "工作群1"
+    assert "id" not in channel
 
     sent = await mcp.call_tool("send_message", {"channel": "工作群1", "text": "hi", "dry_run": True})
     assert _data(sent)["ok"] is True
 
-    logs = await mcp.call_tool("message_logs", {"channel": 1, "limit": 5})
+    logs = await mcp.call_tool("message_logs", {"channel": "工作群1", "limit": 5})
     assert _data(logs)["logs"][0]["dry_run"] is True
 
-    deleted = await mcp.call_tool("channel_delete", {"channel": "1"})
+    deleted = await mcp.call_tool("channel_delete", {"channel": "工作群1"})
     assert _data(deleted)["ok"] is True
     assert _data(await mcp.call_tool("channel_list", {}))["channels"] == []
 
@@ -127,7 +128,7 @@ async def test_mention_all_guard_via_mcp(cfg, hub):
     mcp = build_mcp(hub)
     await mcp.call_tool("channel_create", {"name": "群", "type": "wecom_bot", "settings": WECOM_SETTINGS})
     try:
-        await mcp.call_tool("send_message", {"channel": 1, "text": "hi", "mention_all": True, "dry_run": True})
+        await mcp.call_tool("send_message", {"channel": "群", "text": "hi", "mention_all": True, "dry_run": True})
     except ToolError as exc:
         assert _error_payload(exc)["code"] == "mention_all_denied"
     else:  # pragma: no cover

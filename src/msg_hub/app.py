@@ -98,10 +98,9 @@ class AuthMiddleware:
         if secret:
             entry = self.hub.store.find_entry_by_secret(secret)
             if entry is not None:
-                self.hub.store.touch_entry(entry.id)
+                self.hub.store.touch_entry(entry.name)
                 return Identity(
                     role="entry",
-                    entry_id=entry.id,
                     entry_name=entry.name,
                     entry_prefix=entry.prefix,
                     entry_tags=tuple(entry.tags),

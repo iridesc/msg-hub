@@ -31,7 +31,7 @@ class Audit:
             finally:
                 os.close(fd)
 
-    def query(self, channel_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    def query(self, channel_name: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         files = sorted(self.settings.log_dir.glob("*.jsonl"), reverse=True)
         collected: list[dict[str, Any]] = []
@@ -50,9 +50,9 @@ class Audit:
                     continue
                 if not isinstance(record, dict):
                     continue
-                if channel_id is not None:
+                if channel_name is not None:
                     channel = record.get("channel") or {}
-                    if channel.get("id") != channel_id:
+                    if channel.get("name") != channel_name:
                         continue
                 collected.append(record)
                 if len(collected) >= limit:

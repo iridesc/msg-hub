@@ -153,8 +153,8 @@ curl -s -X POST localhost:8788/api/send \
   -H 'Content-Type: application/json' \
   -d '{"text": "**磁盘占用 92%**", "format": "markdown"}' | jq
 # → {"ok":true,"routed":true,"counts":{"total":1,"sent":1,"skipped":0,"failed":0},
-#    "results":[{"channel":{"id":1,"name":"运维告警群"},"status":"sent",...}],
-#    "matched_rules":[{"id":1,"name":"监控平台的告警 → 运维群"}]}
+#    "results":[{"channel":{"name":"运维告警群","type":"wecom_bot"},"status":"sent",...}],
+#    "matched_rules":[{"name":"监控平台的告警 → 运维群","outbounds":["运维告警群"]}]}
 ```
 
 6. 不确定会发到哪？先做一次路由测试（不发送）：
@@ -277,7 +277,7 @@ networks:
 | 工具 | 作用 |
 |---|---|
 | `channel_types` | 列出出口类型 + 能力 + `settings_schema`（建出口前先调） |
-| `channel_list` | 列出出口（id / 名称 / 类型 / **标签** / 可用状态） |
+| `channel_list` | 列出出口（名称 / 类型 / **标签** / 可用状态） |
 | `channel_get` | 单个出口详情（凭据打码） |
 | `channel_create` | 新建出口：`name` / `type` / `settings` / `options` / **`tags`** |
 | `channel_update` | 改名称/类型/配置/护栏/**标签** |
@@ -288,7 +288,7 @@ networks:
 
 | 工具 | 作用 |
 |---|---|
-| `entry_list` | 列出入口（id / 名称 / 标签 / **明文 token** / 用量） |
+| `entry_list` | 列出入口（名称 / 标签 / **明文 token** / 用量） |
 | `entry_create` | 新建入口并生成 token |
 | `entry_update` | 改名称 / 标签 / 启停（不换 token） |
 | `entry_delete` | 删除（该 token 立即失效） |
@@ -318,7 +318,7 @@ networks:
 
 | 侧 | `field` 可选 | `op` 可选 |
 |---|---|---|
-| 入口条件 | `entry`（入口名称/id）、`tag` | `exact` / `contains` / `prefix` / `suffix` |
+| 入口条件 | `entry`（入口名称）、`tag` | `exact` / `contains` / `prefix` / `suffix` |
 | 出口条件 | `name`（出口名称）、`type`、`tag` | 同上 |
 
 匹配大小写不敏感；对标签做匹配时，「任一标签命中」即为真。
@@ -399,7 +399,7 @@ curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" localhost:8788/api/channels
 # 外部系统：建入口拿 token（之后随时 GET /api/entries 能查回）
 curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" -X POST localhost:8788/api/entries \
   -H 'Content-Type: application/json' -d '{"name":"监控平台","tags":["app:monitor"]}'
-# → {"ok":true,"entry":{"id":1,"prefix":"mh_2f8a1c","secret":"mh_2f8a1c…"}}
+# → {"ok":true,"entry":{"name":"监控平台","prefix":"mh_2f8a1c","secret":"mh_2f8a1c…"}}
 
 # 用它发消息（不传 channel）
 curl -X POST localhost:8788/api/send \
@@ -440,7 +440,7 @@ HTTP 服务形态附带一个单页 dashboard：`http://127.0.0.1:8788/dashboard
 
 - **路由**栏多一个「路由测试」：选一个入口 → 点「测试」→ 先列出**命中的规则**，再列出**最终出口**（按命中顺序去重，已停用的会标注）；未命中的规则收在折叠区，排查时再展开。下拉里只列真实入口——「入口条件为空」的规则对任何入口都生效，所以用任意入口测都覆盖得到；一个入口都没有时按钮会禁用并提示
 - **规则的匹配值可直接输入，也可从下拉里选**（原生 `datalist`）：候选值来自现有对象
-  （入口标签 / 入口名与 id、出口标签 / 类型 / 名称）以及规则里已经用过的值，
+  （入口标签 / 入口名称、出口标签 / 类型 / 名称）以及规则里已经用过的值，
   不限制输入，手写新值照常生效
 - **出口**编辑时类型锁定、凭据表单默认收起；勾「重新填写凭据」才展开（避免把打码值写回去）
 - **发送日志**可按出口过滤（下拉），支持 sent / skipped / failed 三种结果展示
@@ -462,31 +462,28 @@ data/
 └── README.md             # 数据目录自述（首次运行生成）
 ```
 
-`state.json` 结构（version 3）：
+`state.json` 结构（version 4）：
 
 ```jsonc
 {
-  "version": 3,
-  "next_id": 4, "next_entry_id": 3, "next_rule_id": 4,
+  "version": 4,
+  // 没有 id、没有自增游标：**名称就是唯一标识**
 
-  // 出口（= 通知渠道）
-  "channels": [
-    {"id": 1, "name": "运维告警群", "type": "wecom_bot", "enabled": true,
+  "channels": [                       // 出口
+    {"name": "运维告警群", "type": "wecom_bot", "enabled": true,
      "settings": {"webhook_key": "...", "base_url": "...", "timeout": 10},  // 凭据
      "options": {"allow_mention_all": true, "rate_limit_per_min": 30},      // 护栏
      "tags": ["kind:alert", "team:ops"],                                    // 路由标签
      "created_at": "...", "updated_at": "..."}
   ],
 
-  // 入口（= 持 token 的调用方）
-  "entries": [
-    {"id": 1, "name": "监控平台", "secret": "mh_…", "tags": ["app:monitor"],
+  "entries": [                        // 入口
+    {"name": "监控平台", "secret": "mh_…", "tags": ["app:monitor"],
      "enabled": true, "created_at": "...", "last_used_at": "...", "usage_count": 12}
   ],
 
-  // 路由规则（入口条件可空 = 所有入口）
-  "rules": [
-    {"id": 1, "name": "监控平台的告警 → 运维群", "enabled": true,
+  "rules": [                          // 路由规则（入口条件可空 = 所有入口）
+    {"name": "监控平台的告警 → 运维群", "enabled": true,
      "entry":    {"field": "tag", "op": "prefix", "value": "app:"},
      "outbound": {"field": "tag", "op": "exact",  "value": "kind:alert"},
      "created_at": "...", "updated_at": "..."}
@@ -496,54 +493,33 @@ data/
 }
 ```
 
-### 审计日志字段
+> **名称就是标识**：入口 / 出口 / 规则都没有 id 字段。好处是接口、日志、规则条件里
+> 只有一套标识，不会出现「传 id 还是传名字」的歧义；代价是**改名等于换实体**——
+> 引用旧名称的路由规则会随之失效，所以名称要稳定（改名前先看 `route_preview`）。
 
-扇出时**每个出口写一条**，共用同一个 `request_id`：
+### 升级到 v3 / v4
 
-```jsonc
-{
-  "ts": "2026-11-18T11:56:51+08:00",
-  "request_id": "94d905199abd",     // 一次请求内多个出口共享，可据此聚合
-  "source": "api",                  // api / mcp / test
-  "actor": {"type": "entry", "id": 1, "name": "监控平台", "prefix": "mh_2f8a1c"},
-  "routed": true,                   // false = 管理员直连
-  "matched_rules": [{"id": 1, "name": "应用的告警 → 告警群"}],  // 选中本出口的规则
-  "channel": {"id": 1, "name": "运维告警群", "type": "wecom_bot"},
-  "outcome": "sent",                // sent / skipped / failed
-  "dry_run": false,
-  "format": "plain", "chars": 42, "text_preview": "数据库连接池告警…",
-  "ok": true, "error_code": null, "elapsed_ms": 113
-}
-```
+v3 引入了「入口」和「路由规则」，v4 去掉了 id。两段迁移都是自动的。
 
-`matched_rules` 只记**选中这个出口**的规则，不是本次请求命中的全部规则——
-日志是按出口一行的，这样每行都能自解释。管理员直连时 `routed=false`、`matched_rules=[]`。
-
-> `options` 是所有类型通用的护栏：
-
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `allow_mention_all` | `false` | 允许 `@所有人` |
-| `rate_limit_per_min` | `30` | 单出口每分钟发送上限，`0` = 不限；`dry_run` 只校验不真发，不占配额。计数在进程内存里（单进程部署语义） |
-
-### 从 v2 升级到 v3（重要）
-
-v3 引入了「入口」和「路由规则」，**`tokens` 改名 `entries` 并新增 `tags`**，会自动迁移。
-但有一条**必须手工处理**的破坏性变化：
-
-> **v2 的一把 token 可以发任意出口；v3 的入口出口由规则决定，一把 token 的路由结果是恒定的。**
-> 所以原来「一把 token 发 N 个群」的用法，升级后必须拆成 N 个入口 + N 条规则。
-
-迁移会自动做的事：
+**v2 → v3**
 
 - `tokens[]` → `entries[]`，补空 `tags`
 - 出口补空 `tags`
 - 新建空的 `rules[]`（**不会自动生成规则**——否则一条消息会广播到所有出口）
-- `next_token_id` → `next_entry_id`，id 游标保持不变
 - 旧 `MSG_HUB_TOKEN` → 名为「旧版 MSG_HUB_TOKEN（已迁移，可删除）」的入口（标签 `legacy`）
 
-迁移**不会**自动做的事：配规则。升级后如果没配规则，入口发消息会得到 `no_route`，
-错误信息里会列出可用出口和规则条数，引导你去 dashboard 的「路由」页签补规则。
+**v3 → v4**
+
+- 出口 / 入口 / 规则 / 软删除记录里的 `id` 全部去掉
+- 去掉 `next_id` / `next_entry_id` / `next_rule_id` 自增游标
+- 名称的唯一性在 v3 就已经强制（`insert` 和 `replace` 都查重），所以剥离 id 不会撞名
+
+**必须知道的一条**：v2 的一把 token 可以发任意出口；v3 起路由完全由规则决定，
+同一入口的路由结果是恒定的。所以原来「一把 token 发 N 个群」的用法，
+升级后必须拆成 N 个入口 + N 条规则。
+
+迁移**不会**自动配规则。升级后如果没配规则，入口发消息会得到 `no_route`，
+错误信息里会列出规则条数与可用出口，引导你去 dashboard 的「路由」页签补规则。
 
 ## 插件契约（新增渠道类型只需加目录）
 
@@ -590,7 +566,7 @@ echo '{"settings":{"webhook_key":"xxx"},"message":{"text":"hello"}}' \
 {
   "version": 2,
   "request_id": "a1b2c3",
-  "channel": {"id": 1, "name": "运维告警群", "type": "wecom_bot"},
+  "channel": {"name": "运维告警群", "type": "wecom_bot"},
   "settings": {"webhook_key": "xxx"},        // ← 该类型的配置（凭据），v2 新增
   "message": {
     "text": "abc", "format": "plain", "title": null,
