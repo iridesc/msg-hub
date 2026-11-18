@@ -1,4 +1,10 @@
-"""MCP 工具定义（Streamable HTTP，路径 /mcp）。
+"""MCP 工具定义（Streamable HTTP，两个端点）。
+
+    /mcp           调用面：免 HTTP 认证，只有 send_message（参数里带 token）
+    /manager_mcp   管理面：必须 Basic 认证，全量工具（出口 / 入口 / 规则 / 日志）
+
+两个端点各建一个 MCPServer 实例，工具集不同，别的都一样。
+
 
 工具契约只有一份，在 `msg_hub.tools`（stdio 前端共用）。本模块只负责把契约
 翻译成官方 SDK 能理解的函数签名：
@@ -102,13 +108,33 @@ def _sdk_tool(spec: ToolSpec, hub: Hub) -> Callable[..., Any]:
     return tool
 
 
-def build_mcp(hub: Hub) -> MCPServer:
+SENDER_INSTRUCTIONS = (
+    "消息发送端点：只提供 send_message 一个工具。\n"
+    "调用时必须提供 token（入口的 API Token，mh_ 开头）和 msg（正文）。\n"
+    "**不要把出口写在参数里**：发到哪些出口由服务端的入口标签 + 路由规则决定。\n"
+    "token 无效会返回 unauthorized；只想验证配置可以先用 dry_run=true。"
+)
+
+
+def build_mcp(
+    hub: Hub,
+    tools: tuple[ToolSpec, ...] | None = None,
+    *,
+    title: str = "消息渠道中心",
+    instructions: str = INSTRUCTIONS,
+) -> MCPServer:
+    """建一个 MCP 服务实例。
+
+    tools 默认是全量（stdio 形态用这个）；HTTP 两个端点各自传：
+        /mcp          → SENDER_TOOLS（1 个，token + msg）
+        /manager_mcp  → ADMIN_TOOLS（17 个管理工具，**不含 send_message**）
+    """
     mcp = MCPServer(
         name="msg-hub",
-        title="消息渠道中心",
+        title=title,
         version=__version__,
-        instructions=INSTRUCTIONS,
+        instructions=instructions,
     )
-    for spec in TOOLS:
+    for spec in (TOOLS if tools is None else tools):
         mcp.add_tool(_sdk_tool(spec, hub), name=spec.name, description=spec.description)
     return mcp

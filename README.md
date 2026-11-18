@@ -6,8 +6,9 @@
 
 ```
                       ┌──────────────── msg-hub ─────────────────┐
-pi-box / 定时任务 /  → │ /mcp   MCP Streamable HTTP               │
-curl / 脚本          → │ /api   REST                              │
+pi-box / 定时任务 /  → │ /mcp        调用面 MCP（免认证，只有发消息）│
+curl / 脚本          → │ /api        REST（Basic / Bearer）        │
+管理员               → │ /manager_mcp 管理面 MCP（必须 Basic，不发消息）│
                       │                                          │
                       │ ① 入口 Entry    token + 标签（谁在发）    │
                       │ ② 路由 Rule     入口条件 + 出口条件       │
@@ -41,6 +42,8 @@ curl / 脚本          → │ /api   REST                              │
 ## 特性
 
 - **入口 / 路由 / 出口三层**：调用方只持 token；出口靠标签 + 规则匹配，**群改名、换实现都不影响调用方**
+- **两个 MCP 端点**：`/mcp` 调用面免认证，只有一个 `send_message` 工具（参数带 `token` + `msg`）；
+  `/manager_mcp` 管理面必须 Basic，17 个管理工具但**不发消息**。发送只有一条路
 - **调用方无法指定出口**：token 传 `channel` 会被拒（403）——「发到哪」这件事只有服务端说了算
 - **一对多扇出**：一次发送可命中多个出口（并集去重），逐出口返回结果；单个出口停用/不兼容只记为 `skipped`，不会拖垮整个请求
 - **标签表达式**：`exact` / `contains` / `prefix` / `suffix`，配合 `key:value` 标签可做层级匹配（`app:` 捞出所有应用）
@@ -272,6 +275,9 @@ networks:
 
 ## MCP 工具
 
+端点不同，工具集不同（下面这张表是**管理端点 `/manager_mcp` + stdio** 的集合；
+`/mcp` 调用面只有 `send_message` 一个）。
+
 **出口（出口 = 通知渠道）**
 
 | 工具 | 作用 |
@@ -303,12 +309,12 @@ networks:
 | `rule_delete` | 删除规则 |
 | `route_preview` | 给定入口，返回会投递到的出口 + 每条规则的判定 trace |
 
-**发送 / 查询**
+**查询 / 发送**
 
-| 工具 | 作用 |
-|---|---|
-| `send_message` | 发送：`text` / `format` / `title` / `mention_*` / `dry_run`。**不要传 `channel`**，投递目标由规则决定 |
-| `message_logs` | 查发送审计日志 |
+| 工具 | 出现在 | 作用 |
+|---|---|---|
+| `message_logs` | 管理端点 | 查发送审计日志 |
+| `send_message` | **仅 `/mcp`**（`token` + `msg`）、stdio（`text`） | 发送。**不要传出口**，投递目标由规则决定 |
 
 条件对象（`entry` / `outbound` 参数）形状：
 
@@ -368,45 +374,61 @@ kind:alert    kind:daily       team:ops    team:ea
 | POST | `/api/send` | 发送（`text` 必有；`channel` 仅管理员可用） |
 | GET | `/api/logs?channel=&limit=` | 审计日志（**仅管理员**） |
 
-## 鉴权：两套凭据，用途分开
+## 鉴权：两套凭据 + 两个 MCP 端点
 
 | 通道 | 凭据 | 配置位置 | 能干什么 |
 |---|---|---|---|
-| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由测试、发消息 |
-| **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口**；明文可随时查（仅管理员） |
+| **管理面** | Basic `用户名 + 密码` | 环境变量，**强制必填** | 看板、出口/入口/规则增删改、**看日志**、路由测试 |
+| **调用面** | API Token（入口） | `state.json` 的 `entries[]`，**可选** | **只能发消息**，且**不能指定出口**；明文可随时查 |
 
-管理员密码没配就拒绝启动；入口 token 是可选的第二条通道，**不建入口时管理员照常能发消息**，不会出现「无鉴权」状态。
+### 端点分工
 
-权限矩阵：
+| 端点 | 认证 | 工具 | 用途 |
+|---|---|---|---|
+| `/health` | 免 | — | 健康检查 |
+| **`/mcp`** | **免** | 只有 `send_message` | 调用方发消息，token 放在**参数**里 |
+| **`/manager_mcp`** | **Basic**（Bearer 403） | 17 个管理工具（**不含 `send_message`**） | 只管配置：渠道/入口/规则/日志/路由测试 |
+| `/api/*` | Basic 或 Bearer | REST | 脚本 / 定时任务 |
+| `/dashboard` | Basic | 页面 | 看板 |
+
+调用面连认证头都不用配：
+
+```bash
+curl -s -X POST localhost:8788/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+        "name":"send_message",
+        "arguments":{"token":"mh_xxx","msg":"磁盘 92%"}}}'
+```
+
+`token` 无效或已停用 → `{"code":"unauthorized","message":"token 不存在或已停用"}`
+（刻意不区分「不存在」和「已停用」，避免变成探测接口）。
+
+**发送只有一条路**：`/manager_mcp` 里没有 `send_message`，管理员要发消息走
+`/api/send`（Basic）或 dashboard，stdio 形态则在本地用（信任边界内）。
+
+三个工具集：
+
+| 集合 | 数量 | 谁用 |
+|---|---|---|
+| `SENDER_TOOLS` | 1（`send_message`，必填 `token` + `msg`） | `/mcp` 调用面 |
+| `ADMIN_TOOLS` | 17（出口/入口/规则/日志/路由测试/类型） | `/manager_mcp` 管理面 |
+| `TOOLS` | 18 = 17 + 管理员版 `send_message` | stdio（宿主进程内，天然可信） |
+
+### REST 权限矩阵
 
 | 路由 / MCP 工具 | 管理员（Basic） | 入口（Bearer） |
 |---|:--:|:--:|
-| `/health` | 免 | 免 |
+| `/health`、`/mcp` | 免 | 免 |
+| `/manager_mcp` | ✅ | ❌ 403 |
 | `/dashboard`、`/api/channels*`、`/api/entries*`、`/api/rules*`、`/api/route/*`、`/api/logs`、`/api/stats`、`/api/types` | ✅ | ❌ 403 |
-| `/api/send`、MCP `send_message` | ✅（可用 `channel` 直连） | ✅（**传 `channel` 直接 403**） |
-| MCP `channel_*`、`entry_*`、`rule_*`、`route_preview`、`message_logs` | ✅ | ❌ 403 |
+| `/api/send` | ✅（可用 `channel` 直连） | ✅（**传 `channel` 直接 403**） |
 
 两个刻意的设计：
 
 1. **入口 token 看不到日志** —— 日志（含「谁发的」）只有管理员能读。
-2. **入口 token 不能指定出口** —— 否则「出口完全由服务端决定」就不成立了，规则形同虚设。
-   只有管理员可以用 `channel` 直连某个出口（应急/调试）。
-
-```bash
-# 管理员（浏览器弹框用同一对凭据）
-curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" localhost:8788/api/channels
-
-# 外部系统：建入口拿 token（之后随时 GET /api/entries 能查回）
-curl -u "admin:$MSG_HUB_ADMIN_PASSWORD" -X POST localhost:8788/api/entries \
-  -H 'Content-Type: application/json' -d '{"name":"监控平台","tags":["app:monitor"]}'
-# → {"ok":true,"entry":{"name":"监控平台","prefix":"mh_2f8a1c","secret":"mh_2f8a1c…"}}
-
-# 用它发消息（不传 channel）
-curl -X POST localhost:8788/api/send \
-  -H "Authorization: Bearer $MSG_HUB_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"磁盘 92%"}'
-```
+2. **入口 token 不能指定出口** —— 否则「出口完全由服务端决定」就不成立了。
 
 ## Dashboard
 

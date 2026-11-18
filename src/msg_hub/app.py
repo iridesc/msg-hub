@@ -21,14 +21,17 @@ from .auth import (
     set_identity,
 )
 from .dashboard import build_dashboard_routes
-from .mcp_server import build_mcp
+from .mcp_server import SENDER_INSTRUCTIONS, build_mcp
 from .service import Hub
+from .tools import ADMIN_TOOLS, SENDER_TOOLS
 from .settings import Settings
 
-PUBLIC_PATHS = {"/health"}
+# 免认证路径：/mcp 是调用面（身份来自参数里的 token，不需要 HTTP 认证）
+PUBLIC_PATHS = {"/health", "/mcp"}
 
 # 只有管理员能访问的路径前缀（顺序无关，命中即判定）
 ADMIN_ONLY_PREFIXES = (
+    "/manager_mcp",
     "/dashboard",
     "/api/channels",
     "/api/entries",
@@ -153,9 +156,19 @@ class AuthMiddleware:
 
 def build_app(settings: Settings, hub: Hub | None = None) -> Starlette:
     hub = hub or Hub(settings)
-    mcp = build_mcp(hub)
-    mcp_app = mcp.streamable_http_app(
-        streamable_http_path="/mcp",
+
+    # 两个端点分工：
+    #   /mcp         免认证，只有 send_message（token 在参数里）——发送的唯一入口
+    #   /manager_mcp 必须 Basic，17 个管理工具（不含 send_message）——只管配置
+    sender = build_mcp(
+        hub,
+        SENDER_TOOLS,
+        title="msg-hub 发送端点",
+        instructions=SENDER_INSTRUCTIONS,
+    )
+    manager = build_mcp(hub, ADMIN_TOOLS, title="msg-hub 管理端点")
+
+    security = dict(
         # 无状态：每个请求独立，pi-box 等客户端重连不需要恢复会话
         stateless_http=True,
         transport_security=TransportSecuritySettings(
@@ -165,18 +178,21 @@ def build_app(settings: Settings, hub: Hub | None = None) -> Starlette:
         ),
         host=settings.host,
     )
+    sender_app = sender.streamable_http_app(streamable_http_path="/mcp", **security)
+    manager_app = manager.streamable_http_app(streamable_http_path="/manager_mcp", **security)
 
     @asynccontextmanager
     async def lifespan(_app):
         # StreamableHTTP 的会话管理器必须在这里启动；挂载子应用不会自动跑它的 lifespan
-        async with mcp.session_manager.run():
+        async with sender.session_manager.run(), manager.session_manager.run():
             yield
 
     return Starlette(
         routes=[
             *build_routes(hub, settings),
             *build_dashboard_routes(hub, enabled=settings.dashboard_enabled),
-            *mcp_app.routes,
+            *sender_app.routes,
+            *manager_app.routes,
         ],
         middleware=[Middleware(AuthMiddleware, hub=hub, settings=settings)],
         lifespan=lifespan,
