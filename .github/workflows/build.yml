@@ -115,7 +115,7 @@ jobs:
           tags: msg-hub:smoke
           cache-from: type=gha
 
-      - name: Image starts and serves /health
+      - name: Image starts, /health is minimal, endpoint boundaries hold
         run: |
           docker run -d --name smoke -p 8788:8788 \
             -e MSG_HUB_ADMIN_PASSWORD=smoke-test-password-0123 \
@@ -125,13 +125,39 @@ jobs:
             sleep 1
           done
           cat /tmp/health.json
-          python -c "
-          import json
-          body = json.load(open('/tmp/health.json'))
-          assert body['status'] == 'ok', body
-          assert body['types'] == ['email', 'wecom_bot'], body
-          print('health OK：auth =', body['auth'])
-          "
+          python - <<'PY'
+          import json, subprocess
+
+          # 1) /health 是纯探活：只回答活着，不泄露版本/类型/实体数量
+          body = json.load(open("/tmp/health.json"))
+          assert body == {"status": "ok"}, body
+          print("health OK：只回 status")
+
+          AUTH = ["-u", "admin:smoke-test-password-0123"]
+          BASE = "http://127.0.0.1:8788"
+
+          def code(path, extra=()):
+              return subprocess.run(
+                  ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", *extra, BASE + path],
+                  capture_output=True, text=True,
+              ).stdout.strip()
+
+          # 2) 发送面 / 管理面：Basic 只能进管理面
+          assert code("/manager_api/channels", AUTH) == "200", "管理面应当接受 Basic"
+          assert code("/api/send", [*AUTH, "-X", "POST", "-H", "Content-Type: application/json",
+                                    "-d", '{"text":"x"}']) == "403", "管理员不该能从发送面发消息"
+          # 3) 管理面不接受无凭据
+          assert code("/manager_api/channels") == "401", "管理面必须要求认证"
+          # 4) 两个 MCP 端点：/mcp 免认证、/manager_mcp 必须 Basic
+          assert code("/mcp", ["-X", "POST", "-H", "Content-Type: application/json",
+                               "-H", "Accept: application/json, text/event-stream",
+                               "-d", '{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
+                                     '{"protocolVersion":"2025-11-25","capabilities":{},'
+                                     '"clientInfo":{"name":"t","version":"0"}}}']) == "200", \
+              "/mcp 应当免认证"
+          assert code("/manager_mcp") == "401", "/manager_mcp 必须要求 Basic"
+          print("endpoint boundaries OK")
+          PY
           docker rm -f smoke
 
       - name: Image refuses to start without auth
