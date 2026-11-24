@@ -26,62 +26,61 @@ def test_health_is_public(cfg):
     with make_client(cfg, password="secret") as client:
         response = client.get("/health")
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    assert body["types"] == ["email", "wecom_bot"]
-    assert body["auth"] == "basic+bearer"
+    # 免认证接口只回答「活着」，不暴露版本 / 类型 / 实体数量
+    assert response.json() == {"status": "ok"}
 
 
 def test_auth_required(cfg):
     """无凭据 → 401；Basic 管理员 → 200；Bearer 必须是真实 token。"""
     with make_client(cfg, password="secret") as client:
-        assert client.get("/api/channels").status_code == 401
-        assert client.get("/api/channels", headers={"Authorization": "Bearer wrong"}).status_code == 401
+        assert client.get("/manager_api/channels").status_code == 401
+        assert client.get("/manager_api/channels", headers={"Authorization": "Bearer wrong"}).status_code == 401
         # 管理员密码不能当 Bearer 令牌用（两套凭据已彻底分开）
-        assert client.get("/api/channels", headers={"Authorization": "Bearer secret"}).status_code == 401
+        assert client.get("/manager_api/channels", headers={"Authorization": "Bearer secret"}).status_code == 401
         # Basic 管理员可以
-        assert client.get("/api/channels", headers=basic("secret")).status_code == 200
+        assert client.get("/manager_api/channels", headers=basic("secret")).status_code == 200
 
 
 def test_channel_crud(cfg):
     with make_client(cfg) as client:
         created = client.post(
-            "/api/channels",
+            "/manager_api/channels",
             json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
         )
         assert created.status_code == 201, created.text
         channel_name = created.json()["channel"]["name"]
 
-        listed = client.get("/api/channels").json()["channels"]
+        listed = client.get("/manager_api/channels").json()["channels"]
         assert listed[0]["name"] == "工作群1"
         assert listed[0]["status"] == "ok"
 
         # 改名 = 换标识：旧名称从此不存在，后续必须用新名称寻址
-        patched = client.patch(f"/api/channels/{channel_name}", json={"name": "运维群"})
+        patched = client.patch(f"/manager_api/channels/{channel_name}", json={"name": "运维群"})
         assert patched.status_code == 200
         assert patched.json()["channel"]["name"] == "运维群"
-        assert client.get(f"/api/channels/{channel_name}").status_code == 404
+        assert client.get(f"/manager_api/channels/{channel_name}").status_code == 404
         channel_name = "运维群"
 
-        detail = client.get(f"/api/channels/{channel_name}").json()["channel"]
+        detail = client.get(f"/manager_api/channels/{channel_name}").json()["channel"]
         assert detail["name"] == channel_name
         assert detail["settings"]["webhook_key"].startswith("***")
 
-        dry = client.post("/api/send", json={"channel": channel_name, "text": "hi", "dry_run": True})
+        # 发送只能走路由；测某个出口用 channel_test
+        dry = client.post("/manager_api/channels/" + channel_name + "/test", json={"text": "hi", "dry_run": True})
         assert dry.status_code == 200 and dry.json()["ok"] is True
 
-        logs = client.get("/api/logs", params={"channel": channel_name}).json()["logs"]
+        logs = client.get("/manager_api/logs", params={"channel": channel_name}).json()["logs"]
         assert logs and logs[0]["dry_run"] is True
 
-        deleted = client.delete(f"/api/channels/{channel_name}")
+        deleted = client.delete(f"/manager_api/channels/{channel_name}")
         assert deleted.status_code == 200
-        assert client.get("/api/channels").json()["channels"] == []
+        assert client.get("/manager_api/channels").json()["channels"] == []
 
 
 def test_validation_errors_are_400(cfg):
     with make_client(cfg) as client:
         response = client.post(
-            "/api/channels",
+            "/manager_api/channels",
             json={"name": "x", "type": "email", "settings": {"smtp_host": "smtp.qq.com"}},
         )
         assert response.status_code == 400
@@ -91,17 +90,18 @@ def test_validation_errors_are_400(cfg):
 
 
 def test_ambiguous_channel_is_409(cfg):
+    """名字前缀撞车时不能猜 —— 走 channel_test 也一样要报歧义。"""
     with make_client(cfg) as client:
         for name in ("运维告警群", "运维通知群"):
-            client.post("/api/channels", json={"name": name, "type": "wecom_bot", "settings": WECOM_SETTINGS})
-        response = client.post("/api/send", json={"channel": "运维", "text": "hi", "dry_run": True})
+            client.post("/manager_api/channels", json={"name": name, "type": "wecom_bot", "settings": WECOM_SETTINGS})
+        response = client.post("/manager_api/channels/运维/test", json={"text": "hi", "dry_run": True})
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "ambiguous"
 
 
 def test_unknown_type_is_400(cfg):
     with make_client(cfg) as client:
-        response = client.post("/api/channels", json={"name": "x", "type": "telegram", "settings": {}})
+        response = client.post("/manager_api/channels", json={"name": "x", "type": "telegram", "settings": {}})
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "type_unknown"
 
@@ -109,7 +109,7 @@ def test_unknown_type_is_400(cfg):
 def test_channel_test_endpoint_with_unsaved_settings(cfg):
     with make_client(cfg) as client:
         response = client.post(
-            "/api/channels/0/test",
+            "/manager_api/channels/0/test",
             json={"text": "probe"},
         )
         # 不存在的渠道 → 404（id=0 未保存配置时应走 settings 覆盖路径，这里只校验错误语义）

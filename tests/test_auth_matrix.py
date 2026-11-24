@@ -37,13 +37,13 @@ def bearer(secret: str) -> dict[str, str]:
 
 def make_entry(client: TestClient, name: str = "监控平台", tags: list[str] | None = None) -> dict:
     return client.post(
-        "/api/entries", json={"name": name, "tags": tags or []}, headers=admin()
+        "/manager_api/entries", json={"name": name, "tags": tags or []}, headers=admin()
     ).json()["entry"]
 
 
 def make_channel(client: TestClient, name: str = "工作群1", tags: list[str] | None = None) -> int:
     return client.post(
-        "/api/channels",
+        "/manager_api/channels",
         json={
             "name": name,
             "type": "wecom_bot",
@@ -61,7 +61,7 @@ def make_rule(
     outbound: dict | None = None,
 ) -> dict:
     return client.post(
-        "/api/rules",
+        "/manager_api/rules",
         json={
             "name": name,
             "entry": entry,
@@ -88,23 +88,23 @@ def test_entry_secret_is_always_readable(cfg):
         assert entry["prefix"] == entry["secret"][:9]
         assert entry["tags"] == ["app:pibox"]
 
-        listed = client.get("/api/entries", headers=admin()).json()["entries"]
+        listed = client.get("/manager_api/entries", headers=admin()).json()["entries"]
         assert len(listed) == 1
         assert listed[0]["secret"] == entry["secret"]
         assert listed[0]["tags"] == ["app:pibox"]
 
-        detail = client.get(f"/api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
+        detail = client.get(f"/manager_api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
         assert detail["secret"] == entry["secret"]
 
         # 改了标签再读，token 不变
-        client.patch(f"/api/entries/{quote(entry['name'])}", json={"tags": ["app:x"]}, headers=admin())
-        again = client.get(f"/api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
+        client.patch(f"/manager_api/entries/{quote(entry['name'])}", json={"tags": ["app:x"]}, headers=admin())
+        again = client.get(f"/manager_api/entries/{quote(entry['name'])}", headers=admin()).json()["entry"]
         assert again["secret"] == entry["secret"]
 
 
 def test_list_entries_empty_by_default(cfg):
     with make_client(cfg) as client:
-        assert client.get("/api/entries", headers=admin()).json()["entries"] == []
+        assert client.get("/manager_api/entries", headers=admin()).json()["entries"] == []
 
 
 def test_disable_and_delete_entry(cfg):
@@ -119,14 +119,14 @@ def test_disable_and_delete_entry(cfg):
         ).status_code == 200
 
         # 停用后立刻 401
-        patched = client.patch(f"/api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=admin())
+        patched = client.patch(f"/manager_api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=admin())
         assert patched.status_code == 200
         assert client.post(
             "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 401
 
         # 删掉后同样失效
-        assert client.delete(f"/api/entries/{quote(entry['name'])}", headers=admin()).status_code == 200
+        assert client.delete(f"/manager_api/entries/{quote(entry['name'])}", headers=admin()).status_code == 200
         assert client.post(
             "/api/send", json={"text": "hi", "dry_run": True}, headers=bearer(entry["secret"])
         ).status_code == 401
@@ -136,7 +136,7 @@ def test_entry_tags_can_be_updated(cfg):
     with make_client(cfg) as client:
         entry = make_entry(client, tags=["app:pibox"])
         renamed = client.patch(
-            f"/api/entries/{quote(entry['name'])}",
+            f"/manager_api/entries/{quote(entry['name'])}",
             json={"name": "改名后的入口", "tags": ["app:pibox", "kind:alert"]},
             headers=admin(),
         ).json()["entry"]
@@ -147,7 +147,7 @@ def test_entry_tags_can_be_updated(cfg):
 def test_duplicate_entry_name_rejected(cfg):
     with make_client(cfg) as client:
         make_entry(client, "监控平台")
-        response = client.post("/api/entries", json={"name": "监控平台"}, headers=admin())
+        response = client.post("/manager_api/entries", json={"name": "监控平台"}, headers=admin())
         assert response.status_code == 400
 
 
@@ -158,16 +158,16 @@ def test_entry_cannot_touch_management_surface(cfg):
         headers = bearer(entry["secret"])
         for method, path in [
             ("get", "/dashboard"),
-            ("get", "/api/channels"),
-            ("post", "/api/channels"),
-            ("get", "/api/entries"),
-            ("post", "/api/entries"),
-            ("get", "/api/rules"),
-            ("post", "/api/rules"),
-            ("get", "/api/route/preview"),
-            ("get", "/api/logs"),
-            ("get", "/api/types"),
-            ("get", "/api/stats"),
+            ("get", "/manager_api/channels"),
+            ("post", "/manager_api/channels"),
+            ("get", "/manager_api/entries"),
+            ("post", "/manager_api/entries"),
+            ("get", "/manager_api/rules"),
+            ("post", "/manager_api/rules"),
+            ("get", "/manager_api/route/preview"),
+            ("get", "/manager_api/logs"),
+            ("get", "/manager_api/types"),
+            ("get", "/manager_api/stats"),
         ]:
             response = getattr(client, method)(
                 path,
@@ -178,19 +178,28 @@ def test_entry_cannot_touch_management_surface(cfg):
 
 
 # ── 发送面权限 ────────────────────────────────────────────
-def test_entry_cannot_specify_outbound(cfg):
-    """入口 token 传 channel 必须被拒，否则「出口完全由服务端决定」就不成立。"""
+def test_message_body_has_no_outbound_field(cfg):
+    """消息体里根本没有「指定出口」这个字段 —— 传了直接 400，谁都不例外。
+
+    以前入口传 channel 会 403、管理员传了能直连，等于同一个字段两套语义。
+    现在出口完全由服务端决定，没有例外，也不存在「忘了拒绝」的可能。
+    """
     with make_client(cfg) as client:
         channel_id = make_channel(client)
         entry = make_entry(client)
         make_rule(client)
+        # 入口 token：字段不存在 → 400
         response = client.post(
             "/api/send",
             json={"channel": channel_id, "text": "hi", "dry_run": True},
             headers=bearer(entry["secret"]),
         )
-        assert response.status_code == 403
-        assert response.json()["error"]["code"] == "forbidden"
+        assert response.status_code == 400
+        assert "channel" in response.json()["error"]["message"]
+        # 管理员连发送面都进不来 → 403（先卡在门口）
+        assert client.post(
+            "/api/send", json={"channel": channel_id, "text": "hi"}, headers=admin()
+        ).status_code == 403
 
 
 def test_entry_sends_via_route(cfg):
@@ -222,37 +231,22 @@ def test_entry_without_matching_rule_gets_no_route(cfg):
         assert response.json()["error"]["code"] == "no_route"
 
 
-def test_admin_can_send_directly(cfg):
-    """管理员直连出口（应急/调试），不受路由规则限制。"""
+def test_admin_has_no_rest_send_path(cfg):
+    """发送面只认入口 token，Basic 一律 403 —— 管理员没有 REST 发送路径。
+
+    管理员的发送能力只在 stdio（本地）里存在，HTTP 上想单发某个出口用 channel_test。
+    """
     with make_client(cfg) as client:
         channel_id = make_channel(client)
-        sent = client.post(
-            "/api/send",
-            json={"channel": channel_id, "text": "hi", "dry_run": True},
-            headers=admin(),
-        )
-        assert sent.status_code == 200
-        assert sent.json()["routed"] is False
-
-
-def test_admin_without_channel_also_uses_route(cfg):
-    """管理员不传 channel 时也走路由；只匹配「入口条件为空」的规则。"""
-    with make_client(cfg) as client:
-        make_channel(client)
-        # 有入口条件的规则不适用于管理员
-        make_rule(
-            client,
-            name="只给 pibox",
-            entry={"field": "tag", "op": "exact", "value": "app:pibox"},
-        )
-        no_route = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
-        assert no_route.status_code == 409
-        assert no_route.json()["error"]["code"] == "no_route"
-
-        # 补一条「所有入口」的规则后就能发
-        make_rule(client, name="所有入口")
-        ok_response = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
-        assert ok_response.status_code == 200
+        response = client.post("/api/send", json={"text": "hi", "dry_run": True}, headers=admin())
+        assert response.status_code == 403
+        assert "只接受入口 token" in response.json()["error"]["message"]
+        # 管理面照常可用
+        assert client.get("/manager_api/channels", headers=admin()).status_code == 200
+        # 单发某个出口走 channel_test
+        assert client.post(
+            f"/manager_api/channels/{channel_id}/test", json={"dry_run": True}, headers=admin()
+        ).status_code == 200
 
 
 def test_entry_cannot_read_its_own_secret(cfg):
@@ -260,8 +254,8 @@ def test_entry_cannot_read_its_own_secret(cfg):
     with make_client(cfg) as client:
         entry = make_entry(client)
         headers = bearer(entry["secret"])
-        assert client.get("/api/entries", headers=headers).status_code == 403
-        assert client.get(f"/api/entries/{quote(entry['name'])}", headers=headers).status_code == 403
+        assert client.get("/manager_api/entries", headers=headers).status_code == 403
+        assert client.get(f"/manager_api/entries/{quote(entry['name'])}", headers=headers).status_code == 403
 
 
 def test_unknown_bearer_is_unauthorized(cfg):

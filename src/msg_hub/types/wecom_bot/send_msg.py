@@ -64,6 +64,14 @@ def build_webhook(settings: dict[str, Any]) -> str:
     return f"{base}/cgi-bin/webhook/send?key={key}"
 
 
+def _mentions(value: Any) -> list[str]:
+    """@成员：既接受数组也接受单个字符串。"""
+    if value is None:
+        return []
+    items = [value] if isinstance(value, str) else list(value)
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
 def mask_url(url: str) -> str:
     if "key=" not in url:
         return url
@@ -71,12 +79,21 @@ def mask_url(url: str) -> str:
     return f"{head}key={tail[:6]}***"
 
 
-def build_payload(message: dict[str, Any]) -> tuple[dict[str, Any], int]:
+def build_payload(message: dict[str, Any], options: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    """组装企业微信的 payload。
+
+    出口相关的参数都在 extra 里，核心不解析、原样透传，这里自己按需要取。
+    """
     text = str(message.get("text") or "")
-    fmt = str(message.get("format") or "plain").lower()
-    users = [str(u) for u in (message.get("mention_users") or []) if str(u).strip()]
-    mobiles = [str(m) for m in (message.get("mention_mobiles") or []) if str(m).strip()]
-    mention_all = bool(message.get("mention_all"))
+    extra = message.get("extra") or {}
+    fmt = str(extra.get("format") or "plain").lower()
+    users = [str(u) for u in _mentions(extra.get("mention_users")) if u]
+    mobiles = [str(m) for m in _mentions(extra.get("mention_mobiles")) if m]
+    mention_all = bool(extra.get("mention_all"))
+
+    # @所有人 要出口显式授权（options.allow_mention_all），否则容易误伤全群
+    if mention_all and not options.get("allow_mention_all"):
+        raise ValueError("该出口未开启 @所有人（需要 options.allow_mention_all=true）")
 
     if fmt == "markdown":
         content = text
@@ -119,7 +136,7 @@ def main() -> int:
     message = request.get("message") or {}
     try:
         url = build_webhook(settings)
-        payload, size = build_payload(message)
+        payload, size = build_payload(message, request.get("options") or {})
     except ValueError as exc:
         return fail("invalid_argument", str(exc))
 

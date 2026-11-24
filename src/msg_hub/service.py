@@ -24,7 +24,6 @@ from . import routing
 from .audit import Audit
 from .auth import Identity, current_identity
 from .models import (
-    MESSAGE_FORMATS,
     Channel,
     Condition,
     Entry,
@@ -202,20 +201,31 @@ class Hub:
     def list_entries(self) -> list[dict[str, Any]]:
         return [entry.to_public() for entry in self.store.entries()]
 
-    def resolve_entry(self, ref: int | str) -> Entry:
+    @staticmethod
+    def _resolve_named(items: list[Any], ref: int | str, label: str, flag: str) -> Any:
+        """按名称找对象：先精确、再大小写不敏感。
+
+        入口和规则都走这里。它们**不做子串模糊匹配** —— 出口那边有模糊匹配是
+        为了手输方便，但入口/规则是配置对象，模糊命中容易改错东西。
+        """
         name = str(ref).strip()
         if not name:
-            raise HubError("invalid_argument", "entry 不能为空")
-        entries = self.store.entries()
-        for entry in entries:
-            if entry.name == name:
-                return entry
-        for entry in entries:
-            if entry.name.casefold() == name.casefold():
-                return entry
+            raise HubError("invalid_argument", f"{flag} 不能为空")
+        for item in items:
+            if item.name == name:
+                return item
+        lowered = name.casefold()
+        for item in items:
+            if item.name.casefold() == lowered:
+                return item
         raise HubError(
-            "not_found", f"入口 {name} 不存在", available=[{"name": e.name} for e in entries]
+            "not_found",
+            f"{label} {name} 不存在",
+            available=[{"name": item.name} for item in items],
         )
+
+    def resolve_entry(self, ref: int | str) -> Entry:
+        return self._resolve_named(self.store.entries(), ref, "入口", "entry")
 
     def get_entry(self, ref: int | str) -> dict[str, Any]:
         return self.resolve_entry(ref).to_public()
@@ -263,17 +273,7 @@ class Hub:
         return [rule.to_dict() for rule in self.store.rules()]
 
     def resolve_rule(self, ref: int | str) -> Rule:
-        name = str(ref).strip()
-        rules = self.store.rules()
-        for rule in rules:
-            if rule.name == name:
-                return rule
-        for rule in rules:
-            if rule.name.casefold() == name.casefold():
-                return rule
-        raise HubError(
-            "not_found", f"规则 {name} 不存在", available=[{"name": r.name} for r in rules]
-        )
+        return self._resolve_named(self.store.rules(), ref, "规则", "rule")
 
     def get_rule(self, ref: int | str) -> dict[str, Any]:
         return self.resolve_rule(ref).to_dict()
@@ -374,48 +374,6 @@ class Hub:
             if consume:
                 bucket.append(now)
 
-    def _validate_message(
-        self,
-        channel: Channel,
-        manifest: Manifest,
-        text: str,
-        fmt: str,
-        mention_users: list[str],
-        mention_mobiles: list[str],
-        mention_all: bool,
-    ) -> Message:
-        """渠道相关的消息校验；不通过就抛 HubError（调用方决定是跳过还是失败）。"""
-        if fmt not in MESSAGE_FORMATS:
-            raise HubError("invalid_argument", f"format 只支持 {MESSAGE_FORMATS}")
-        formats = (manifest.capabilities or {}).get("formats")
-        if isinstance(formats, list) and fmt not in formats:
-            raise HubError(
-                "invalid_argument",
-                f"渠道类型 {manifest.type} 不支持 format={fmt}（支持：{formats}）",
-            )
-        if mention_all:
-            allowed = channel.allow_mention_all and bool((manifest.capabilities or {}).get("mention_all"))
-            if not allowed:
-                raise HubError(
-                    "mention_all_denied",
-                    f"渠道 {channel.name} 未开启 @所有人（需在 options.allow_mention_all=true 且类型支持）",
-                )
-        if (mention_users or mention_mobiles) and not (manifest.capabilities or {}).get("mention"):
-            raise HubError("invalid_argument", f"渠道类型 {manifest.type} 不支持 @指定成员")
-        return Message(
-            text=text,
-            format=fmt,  # type: ignore[arg-type]
-            title=None,
-            mention_users=list(mention_users),
-            mention_mobiles=list(mention_mobiles),
-            mention_all=bool(mention_all),
-        )
-
-    @staticmethod
-    def _error_of(exc: HubError) -> dict[str, Any]:
-        error = exc.to_dict()["error"]
-        return {"code": error["code"], "message": error["message"], "retryable": error["retryable"]}
-
     def _deliver(
         self,
         channel: Channel,
@@ -424,13 +382,13 @@ class Hub:
         dry_run: bool,
         source: str,
         *,
-        strict: bool,
+        routed: bool,
         matched_rules: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """向单个出口投递。
+        """向单个出口投递。**任何问题都抛出**，不吞、不降级。
 
-        strict=True（管理员直连）：任何问题都抛出，保持 v2 的语义。
-        strict=False（路由扇出）：问题记为 skipped/failed，不中断其他出口。
+        出口是最后一道边界：消息到了这里就该按出口的规则发，发不出去就得让
+        调用方知道。静默跳过只会让「消息没到」和「消息到了」长得一样。
 
         matched_rules 是**选中本出口的规则**（不是本次请求命中的全部规则）——
         日志是按出口一行的，所以每一行只记「为什么发到你这个出口」。
@@ -445,68 +403,34 @@ class Hub:
                     "channel_broken", f"出口 {channel.name} 不可用：{detail}", name=channel.name
                 )
             manifest = self.registry.get(channel.type)
-            prepared = self._validate_message(
-                channel,
-                manifest,
-                message.text,
-                message.format,
-                message.mention_users,
-                message.mention_mobiles,
-                message.mention_all,
-            )
-            prepared.title = message.title
             self._check_rate(channel, consume=not dry_run)
         except HubError as exc:
-            if strict:
-                self._record(
-                    info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                    outcome="failed", matched_rules=matched_rules, routed=not strict,
-                )
-                raise
-            # 配置类问题算「跳过」，不算投递失败——避免一个不兼容的出口
-            # 把整个多出口请求污染成 partial
             self._record(
                 info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                outcome="skipped", matched_rules=matched_rules, routed=not strict,
+                outcome="failed", matched_rules=matched_rules, routed=routed,
             )
-            return {
-                "channel": info,
-                "status": "skipped",
-                "ok": False,
-                "error": self._error_of(exc),
-            }
+            raise
 
         try:
             result = self.registry.invoke(
                 manifest,
                 settings=channel.settings,
                 channel=info,
-                message=prepared,
+                message=message,
                 options=channel.options,
                 request_id=request_id,
                 dry_run=dry_run,
             )
         except HubError as exc:
-            if strict:
-                self._record(
-                    info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                    outcome="failed", matched_rules=matched_rules, routed=not strict,
-                )
-                raise
             self._record(
                 info, message, request_id, source, dry_run, exc.code, exc.message, None,
-                outcome="failed", matched_rules=matched_rules, routed=not strict,
+                outcome="failed", matched_rules=matched_rules, routed=routed,
             )
-            return {
-                "channel": info,
-                "status": "failed",
-                "ok": False,
-                "error": self._error_of(exc),
-            }
+            raise
 
         self._record(
             info, message, request_id, source, dry_run, None, "发送成功", result.elapsed_ms,
-            outcome="sent", matched_rules=matched_rules, routed=not strict,
+            outcome="sent", matched_rules=matched_rules, routed=routed,
         )
         return {
             "channel": info,
@@ -539,15 +463,16 @@ class Hub:
         self,
         text: str | None,
         *,
-        channel: int | str | None = None,
-        format: str = "plain",  # noqa: A002 - 参数名与对外契约一致
-        title: str | None = None,
-        mention_users: list[str] | None = None,
-        mention_mobiles: list[str] | None = None,
-        mention_all: bool = False,
+        extra: dict[str, Any] | None = None,
         dry_run: bool = False,
         source: str = "api",
+        channel: int | str | None = None,
     ) -> dict[str, Any]:
+        """发送。
+
+        核心只碰两个字段：text（校验 + 审计 preview）和 dry_run（是否消费配额）。
+        extra 原样塞进 Message 带给插件 —— 核心不读、不校验、不归一化。
+        """
         identity = current_identity()
         request_id = uuid.uuid4().hex[:12]
 
@@ -559,16 +484,7 @@ class Hub:
                 "text_too_long",
                 f"消息过长（{len(body)} 字符，上限 {self.settings.max_text_chars}）",
             )
-        fmt = str(format or "plain").lower()
-
-        message = Message(
-            text=body,
-            format=fmt,  # type: ignore[arg-type]
-            title=title,
-            mention_users=list(mention_users or []),
-            mention_mobiles=list(mention_mobiles or []),
-            mention_all=bool(mention_all),
-        )
+        message = Message(text=body, extra=dict(extra or {}))
 
         # ── 1. 决定出口集合 ──────────────────────────────
         direct = channel not in (None, "")
@@ -580,7 +496,6 @@ class Hub:
                     "调用方不能指定出口：只传 token 即可，投递目标由服务端的路由规则决定",
                 )
             targets = [self.resolve(channel)]  # type: ignore[arg-type]
-            strict = True
         else:
             entry = self._identity_entry(identity)
             channels = self.store.channels()
@@ -588,7 +503,6 @@ class Hub:
             selection = routing.select(rules, entry, channels)
             matched_rules = selection.matched_rules
             targets = selection.channels
-            strict = False
             if not targets:
                 raise HubError(
                     "no_route",
@@ -603,38 +517,33 @@ class Hub:
                 )
 
         # ── 2. 逐个出口发送（串行，保持可预期）─────────────
-        results = [
-            self._deliver(
-                target, message, request_id, dry_run, source, strict=strict,
-                matched_rules=self._rules_for(channel=target, matched=matched_rules),
+        # ── 2. 逐个出口发送 ────────────────────────────
+        # 任何个出口出错，整个请求就出错：出口的异常原样抛给调用方，
+        # 调用方能第一时间看到「哪个出口、什么原因」，不会被「部分成功」掩盖。
+        results: list[dict[str, Any]] = []
+        for target in targets:
+            results.append(
+                self._deliver(
+                    target, message, request_id, dry_run, source,
+                    routed=not direct,
+                    matched_rules=self._rules_for(channel=target, matched=matched_rules),
+                )
             )
-            for target in targets
-        ]
 
         # ── 3. 聚合 ─────────────────────────────────────
         sent = [r for r in results if r["status"] == "sent"]
-        skipped = [r for r in results if r["status"] == "skipped"]
-        failed = [r for r in results if r["status"] == "failed"]
-
-        if not sent and not dry_run:
-            raise HubError(
-                "all_failed",
-                f"所有 {len(results)} 个出口都未成功发送",
-                request_id=request_id,
-                results=results,
-            )
 
         payload: dict[str, Any] = {
             "ok": True,
             "request_id": request_id,
             "dry_run": dry_run,
             "routed": not direct,
-            "partial": bool(skipped or failed),
+            "partial": False,
             "counts": {
                 "total": len(results),
                 "sent": len(sent),
-                "skipped": len(skipped),
-                "failed": len(failed),
+                "skipped": 0,
+                "failed": 0,
             },
             "results": results,
         }
@@ -749,7 +658,9 @@ class Hub:
                     "matched_rules": list(matched_rules or []),
                     "routed": routed,
                     "channel": channel,
-                    "format": message.format,
+                    # 出口相关参数（format / title / mention_* …）核心不解析，
+                    # 整包存下来：排查时能看到当时到底传了什么。
+                    "extra": dict(message.extra),
                     "chars": len(message.text),
                     "text_preview": preview,
                     "ok": error_code is None,

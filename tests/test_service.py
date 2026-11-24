@@ -125,22 +125,27 @@ def test_disabled_channel_cannot_send(hub):
     assert exc.value.code == "channel_disabled"
 
 
-def test_mention_all_guard(hub):
+def test_mention_all_guard_is_enforced_by_the_plugin(hub):
+    """@所有人的护栏在出口插件里，不在核心。
+
+    核心不解析 extra，所以 extra={"mention_all": true} 直接透传给插件，
+    由插件检查出口有没有开 options.allow_mention_all。
+    """
     channel = _create_wecom(hub)
     with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["name"], mention_all=True, dry_run=True)
-    assert exc.value.code == "mention_all_denied"
+        hub.send("hi", channel=channel["name"], extra={"mention_all": True}, dry_run=True)
+    assert exc.value.code == "invalid_argument"
 
     hub.update_channel(channel["name"], options={"allow_mention_all": True})
-    result = hub.send("hi", channel=channel["name"], mention_all=True, dry_run=True)
+    result = hub.send("hi", channel=channel["name"], extra={"mention_all": True}, dry_run=True)
     assert result["ok"]
 
 
-def test_format_must_be_supported(hub):
+def test_unknown_extra_key_is_not_validated_by_core(hub):
+    """核心不认识 extra 里的键 —— 原样透传，由出口决定认不认。"""
     channel = _create_wecom(hub)
-    with pytest.raises(HubError) as exc:
-        hub.send("hi", channel=channel["name"], format="html", dry_run=True)
-    assert exc.value.code == "invalid_argument"
+    result = hub.send("hi", channel=channel["name"], extra={"随便一个键": 1}, dry_run=True)
+    assert result["ok"] is True
 
 
 def test_rate_limit(hub, mock_wecom):
@@ -183,7 +188,9 @@ def test_real_send_to_mock_wecom(hub, mock_wecom):
         type_name="wecom_bot",
         settings={"webhook_url": f"{mock_wecom.base_url}/cgi-bin/webhook/send?key=abc123456"},
     )
-    result = hub.send("线上告警：CPU 95%", channel=channel["name"], mention_users=["zhangsan"])
+    result = hub.send(
+        "线上告警：CPU 95%", channel=channel["name"], extra={"mention_users": ["zhangsan"]}
+    )
     assert result["ok"] is True
 
     request = mock_wecom.last
@@ -222,7 +229,11 @@ def test_markdown_mention_uses_inline_syntax(hub, mock_wecom):
         type_name="wecom_bot",
         settings={"webhook_url": f"{mock_wecom.base_url}/send?key=k"},
     )
-    hub.send("**告警**", channel=channel["name"], format="markdown", mention_users=["lisi"])
+    hub.send(
+        "**告警**",
+        channel=channel["name"],
+        extra={"format": "markdown", "mention_users": ["lisi"]},
+    )
     payload = mock_wecom.last["json"]
     assert payload["msgtype"] == "markdown"
     assert "<@lisi>" in payload["markdown"]["content"]

@@ -188,6 +188,61 @@ class Store:
             json.dumps(state, ensure_ascii=False, indent=2),
         )
 
+    # ── 集合级操作（三组实体结构相同，抽出来）──────────
+    # channels / entries / rules 都是「按名字定位 → 改/删 → 落盘」，
+    # 差别只在集合名、实体类型和错误文案。这里统一处理，避免三份几乎一样的
+    # 循环各写一遍、各改一遍。
+
+    def _find_index(self, items: list[dict[str, Any]], name: str) -> int:
+        for index, raw in enumerate(items):
+            if raw["name"] == name:
+                return index
+        return -1
+
+    def _ensure_unique(
+        self, items: list[dict[str, Any]], name: str, label: str, *, exclude: str = ""
+    ) -> None:
+        """名字已存在就报错（大小写不敏感）。exclude 是「改名时排除自己」。"""
+        for raw in items:
+            other = raw["name"]
+            if other == exclude:
+                continue
+            if _same(other, name):
+                raise HubError("invalid_argument", f"{label}名称已存在：{name}")
+
+    def _replace_in(
+        self,
+        state: dict[str, Any],
+        section: str,
+        old_name: str,
+        new_obj: Any,
+        label: str,
+        *,
+        touch: bool = False,
+    ) -> Any:
+        """按名定位并替换。落盘由调用方负责（可能要连同别的改动一起写）。"""
+        items = state[section]
+        index = self._find_index(items, old_name)
+        if index < 0:
+            raise HubError("not_found", f"{label} {old_name} 不存在")
+        self._ensure_unique(items, new_obj.name, label, exclude=old_name)
+        if touch:
+            new_obj.updated_at = now_iso()
+        items[index] = new_obj.to_dict()
+        return new_obj
+
+    def _delete_from(
+        self, state: dict[str, Any], section: str, name: str, label: str, factory: Any
+    ) -> Any:
+        """按名定位并删除，返回被删的对象。落盘由调用方负责。"""
+        items = state[section]
+        index = self._find_index(items, name)
+        if index < 0:
+            raise HubError("not_found", f"{label} {name} 不存在")
+        obj = factory(items[index])
+        del items[index]
+        return obj
+
     def _persist_upgrade(self) -> None:
         """启动时把内存里的升级结果落盘一次，让文件本身也是新格式。"""
         try:
@@ -238,33 +293,18 @@ class Store:
     def replace(self, old_name: str, channel: Channel) -> Channel:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["channels"]):
-                if raw["name"] != old_name:
-                    continue
-                if any(
-                    _same(other["name"], channel.name) and other["name"] != old_name
-                    for other in state["channels"]
-                ):
-                    raise HubError("invalid_argument", f"出口名称已存在：{channel.name}")
-                channel.updated_at = now_iso()
-                state["channels"][index] = channel.to_dict()
-                self._save(state)
-                return channel
-            raise HubError("not_found", f"出口 {old_name} 不存在")
+            self._replace_in(state, "channels", old_name, channel, "出口", touch=True)
+            self._save(state)
+            return channel
 
     def soft_delete(self, name: str) -> Channel:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["channels"]):
-                if raw["name"] != name:
-                    continue
-                channel = Channel.from_dict(raw)
-                del state["channels"][index]
-                # 软删除直接留完整对象（含凭据），恢复时不需要再找别的文件
-                state["deleted"].append({**channel.to_dict(), "deleted_at": now_iso()})
-                self._save(state)
-                return channel
-            raise HubError("not_found", f"出口 {name} 不存在")
+            channel = self._delete_from(state, "channels", name, "出口", Channel.from_dict)
+            # 软删除直接留完整对象（含凭据），恢复时不需要再找别的文件
+            state["deleted"].append({**channel.to_dict(), "deleted_at": now_iso()})
+            self._save(state)
+            return channel
 
     # ── 入口 ────────────────────────────────────────────
     def entries(self) -> list[Entry]:
@@ -295,30 +335,16 @@ class Store:
     def replace_entry(self, old_name: str, entry: Entry) -> Entry:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["entries"]):
-                if raw["name"] != old_name:
-                    continue
-                if any(
-                    _same(other["name"], entry.name) and other["name"] != old_name
-                    for other in state["entries"]
-                ):
-                    raise HubError("invalid_argument", f"入口名称已存在：{entry.name}")
-                state["entries"][index] = entry.to_dict()
-                self._save(state)
-                return entry
-            raise HubError("not_found", f"入口 {old_name} 不存在")
+            self._replace_in(state, "entries", old_name, entry, "入口")
+            self._save(state)
+            return entry
 
     def delete_entry(self, name: str) -> Entry:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["entries"]):
-                if raw["name"] != name:
-                    continue
-                entry = Entry.from_dict(raw)
-                del state["entries"][index]
-                self._save(state)
-                return entry
-            raise HubError("not_found", f"入口 {name} 不存在")
+            entry = self._delete_from(state, "entries", name, "入口", Entry.from_dict)
+            self._save(state)
+            return entry
 
     def find_entry_by_secret(self, secret: str) -> Entry | None:
         """按明文查找启用的入口（认证用）。
@@ -374,31 +400,16 @@ class Store:
     def replace_rule(self, old_name: str, rule: Rule) -> Rule:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["rules"]):
-                if raw["name"] != old_name:
-                    continue
-                if any(
-                    _same(other["name"], rule.name) and other["name"] != old_name
-                    for other in state["rules"]
-                ):
-                    raise HubError("invalid_argument", f"规则名称已存在：{rule.name}")
-                rule.updated_at = now_iso()
-                state["rules"][index] = rule.to_dict()
-                self._save(state)
-                return rule
-            raise HubError("not_found", f"规则 {old_name} 不存在")
+            self._replace_in(state, "rules", old_name, rule, "规则", touch=True)
+            self._save(state)
+            return rule
 
     def delete_rule(self, name: str) -> Rule:
         with self._exclusive():
             state = self._load()
-            for index, raw in enumerate(state["rules"]):
-                if raw["name"] != name:
-                    continue
-                rule = Rule.from_dict(raw)
-                del state["rules"][index]
-                self._save(state)
-                return rule
-            raise HubError("not_found", f"规则 {name} 不存在")
+            rule = self._delete_from(state, "rules", name, "规则", Rule.from_dict)
+            self._save(state)
+            return rule
 
     # ── 旧版兼容 ────────────────────────────────────────
     def _import_legacy_token(self) -> None:

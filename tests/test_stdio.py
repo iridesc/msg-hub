@@ -151,7 +151,13 @@ def test_full_channel_lifecycle_over_stdio(tmp_path):
         assert "id" not in channel
         assert channel["settings"]["webhook_key"] == "***6789"
 
-        sent = client.call_tool("send_message", {"channel": "工作群1", "text": "hi", "dry_run": True})["result"]
+        # send 只能走路由；没有规则时是 no_route
+        no_route = client.call_tool("send_message", {"text": "hi", "dry_run": True})["result"]
+        assert no_route["isError"] is True
+        assert json.loads(no_route["content"][0]["text"])["code"] == "no_route"
+
+        # 单发某个出口用 channel_test
+        sent = client.call_tool("channel_test", {"channel": "工作群1", "text": "hi", "dry_run": True})["result"]
         assert sent["isError"] is False
         assert json.loads(sent["content"][0]["text"])["ok"] is True
 
@@ -167,7 +173,7 @@ def test_full_channel_lifecycle_over_stdio(tmp_path):
         assert unknown["error"]["code"] == -32602
 
         # 业务错误：渠道不存在 → isError=true 的工具结果
-        missing = client.call_tool("send_message", {"channel": "不存在", "text": "x"})["result"]
+        missing = client.call_tool("channel_test", {"channel": "不存在", "text": "x"})["result"]
         assert missing["isError"] is True
         assert json.loads(missing["content"][0]["text"])["code"] == "not_found"
     finally:

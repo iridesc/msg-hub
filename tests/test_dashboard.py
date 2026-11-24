@@ -28,15 +28,15 @@ def _setup_route(client: TestClient, password: str = "secret") -> dict:
     """建好「出口 + 入口 + 规则」，返回带明文 token 的入口。"""
     headers = basic(password)
     client.post(
-        "/api/channels",
+        "/manager_api/channels",
         json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS, "tags": ["kind:test"]},
         headers=headers,
     )
     entry = client.post(
-        "/api/entries", json={"name": "监控平台", "tags": ["app:pibox"]}, headers=headers
+        "/manager_api/entries", json={"name": "监控平台", "tags": ["app:pibox"]}, headers=headers
     ).json()["entry"]
     client.post(
-        "/api/rules",
+        "/manager_api/rules",
         json={
             "name": "pibox → 全部出口",
             "entry": {"field": "tag", "op": "prefix", "value": "app:"},
@@ -97,6 +97,12 @@ def test_dashboard_page_served_with_basic_auth(cfg):
     assert 'id="f-reset"' in logs_view
     # 旧的单一下拉已经换掉
     assert 'id="log-filter"' not in body
+    # token 在列表里默认打码，DOM 里不预置明文
+    assert "data-token=" in body and "data-reveal=" in body
+    assert "••••••••" in body
+    # 「只显示一次」那个弹窗已删（列表里随时能看，不需要它）
+    assert 'id="secret-modal"' not in body
+    assert "完整值只显示这一次" not in body
     # 页面里不能出现密码
     assert password not in body
 
@@ -109,12 +115,12 @@ def test_entry_identity_cannot_open_dashboard(cfg):
 
         # 管理面：全部 403
         assert client.get("/dashboard", headers=bearer).status_code == 403
-        assert client.get("/api/channels", headers=bearer).status_code == 403
-        assert client.get("/api/entries", headers=bearer).status_code == 403
-        assert client.get("/api/rules", headers=bearer).status_code == 403
-        assert client.get("/api/route/preview", headers=bearer).status_code == 403
-        assert client.get("/api/logs", headers=bearer).status_code == 403
-        assert client.get("/api/stats", headers=bearer).status_code == 403
+        assert client.get("/manager_api/channels", headers=bearer).status_code == 403
+        assert client.get("/manager_api/entries", headers=bearer).status_code == 403
+        assert client.get("/manager_api/rules", headers=bearer).status_code == 403
+        assert client.get("/manager_api/route/preview", headers=bearer).status_code == 403
+        assert client.get("/manager_api/logs", headers=bearer).status_code == 403
+        assert client.get("/manager_api/stats", headers=bearer).status_code == 403
 
         # 调用面：不能指定出口，只能走路由
         sent = client.post(
@@ -123,11 +129,12 @@ def test_entry_identity_cannot_open_dashboard(cfg):
         assert sent.status_code == 200, sent.text
         assert sent.json()["ok"] is True
         assert sent.json()["routed"] is True
+        # 消息体里没有 channel 这个字段：谁传都是 400
         assert client.post(
             "/api/send",
             json={"channel": "工作群1", "text": "hi", "dry_run": True},
             headers=bearer,
-        ).status_code == 403
+        ).status_code == 400
 
 
 def test_disabled_entry_is_rejected(cfg):
@@ -140,7 +147,7 @@ def test_disabled_entry_is_rejected(cfg):
 
         # 禁用后立刻失效
         client.patch(
-            f"/api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=basic("secret")
+            f"/manager_api/entries/{quote(entry['name'])}", json={"enabled": False}, headers=basic("secret")
         )
         assert client.post(
             "/api/send", json={"text": "x", "dry_run": True}, headers=bearer
@@ -159,19 +166,22 @@ def test_dashboard_can_be_disabled(cfg):
     hub = Hub(settings)
     with TestClient(build_app(settings, hub), raise_server_exceptions=False) as client:
         assert client.get("/dashboard", headers=basic("secret")).status_code == 404
-        assert client.get("/api/channels", headers=basic("secret")).status_code == 200
+        assert client.get("/manager_api/channels", headers=basic("secret")).status_code == 200
 
 
 def test_stats_aggregates_channels_and_sends(cfg):
     with make_client(cfg, password="secret") as client:
         client.post(
-            "/api/channels",
+            "/manager_api/channels",
             json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
             headers=basic("secret"),
         )
-        client.post("/api/send", json={"channel": "工作群1", "text": "hi", "dry_run": True}, headers=basic("secret"))
+        # 计数走 channel_test：它打 source=test，也是审计里的一条 dry_run
+        client.post(
+            "/manager_api/channels/工作群1/test", json={"text": "hi", "dry_run": True}, headers=basic("secret")
+        )
 
-        body = client.get("/api/stats", headers=basic("secret")).json()
+        body = client.get("/manager_api/stats", headers=basic("secret")).json()
     assert body["channels"]["total"] == 1
     assert body["channels"]["ok"] == 1
     # dry_run 不进成功率：只校验不真发，成功几乎是必然，混进去会把成功率撑高
@@ -185,7 +195,7 @@ def test_manual_channel_lifecycle_through_api(cfg):
     with make_client(cfg, password="secret") as client:
         auth = basic("secret")
         created = client.post(
-            "/api/channels",
+            "/manager_api/channels",
             json={"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
             headers=auth,
         )
@@ -194,23 +204,23 @@ def test_manual_channel_lifecycle_through_api(cfg):
 
         # 停用 → 列表里状态变 disabled
         patched = client.patch(
-            f"/api/channels/{quote(channel_name)}", json={"enabled": False}, headers=auth
+            f"/manager_api/channels/{quote(channel_name)}", json={"enabled": False}, headers=auth
         )
         assert patched.status_code == 200
-        listed = client.get("/api/channels", headers=auth).json()["channels"]
+        listed = client.get("/manager_api/channels", headers=auth).json()["channels"]
         assert listed[0]["enabled"] is False
         assert listed[0]["status"] == "disabled"
 
         # 停用后不能发送
-        blocked = client.post("/api/send", json={"channel": channel_name, "text": "hi"}, headers=auth)
+        blocked = client.post(f"/manager_api/channels/{channel_name}/test", json={"text": "hi"}, headers=auth)
         assert blocked.status_code == 409
         assert blocked.json()["error"]["code"] == "channel_disabled"
 
         # 启用回来
-        client.patch(f"/api/channels/{channel_name}", json={"enabled": True}, headers=auth)
-        detail = client.get(f"/api/channels/{channel_name}", headers=auth).json()["channel"]
+        client.patch(f"/manager_api/channels/{channel_name}", json={"enabled": True}, headers=auth)
+        detail = client.get(f"/manager_api/channels/{channel_name}", headers=auth).json()["channel"]
         assert detail["enabled"] is True
 
         # 删除
-        assert client.delete(f"/api/channels/{channel_name}", headers=auth).status_code == 200
-        assert client.get("/api/channels", headers=auth).json()["channels"] == []
+        assert client.delete(f"/manager_api/channels/{channel_name}", headers=auth).status_code == 200
+        assert client.get("/manager_api/channels", headers=auth).json()["channels"] == []

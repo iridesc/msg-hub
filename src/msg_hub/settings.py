@@ -99,11 +99,6 @@ class Settings:
         return self.data_dir / "state.json"
 
     @property
-    def trash_dir(self) -> Path:
-        """v1 遗留；v2 的软删除直接存在 state.json 的 deleted[] 里。"""
-        return self.data_dir / "config" / ".trash"
-
-    @property
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
 

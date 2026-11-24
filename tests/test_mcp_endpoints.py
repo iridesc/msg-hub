@@ -95,15 +95,15 @@ def _setup(cfg) -> tuple[TestClient, str]:
     """建一个最小可用的「出口 + 入口 + 规则」，返回客户端和入口 token。"""
     client = make_client(cfg)
     client.post(
-        "/api/channels",
+        "/manager_api/channels",
         json={"name": "测试群", "type": "wecom_bot", "settings": WECOM_SETTINGS, "tags": ["kind:test"]},
         headers=admin(),
     )
     token = client.post(
-        "/api/entries", json={"name": "调用方", "tags": ["app:x", "kind:test"]}, headers=admin()
+        "/manager_api/entries", json={"name": "调用方", "tags": ["app:x", "kind:test"]}, headers=admin()
     ).json()["entry"]["secret"]
     client.post(
-        "/api/rules",
+        "/manager_api/rules",
         json={
             "name": "调用方 → 测试群",
             "entry": {"field": "tag", "op": "exact", "value": "kind:test"},
@@ -153,7 +153,7 @@ def test_unknown_token_reports_unauthorized(cfg):
 def test_disabled_entry_token_is_rejected(cfg):
     client, token = _setup(cfg)
     with client:
-        client.patch("/api/entries/调用方", json={"enabled": False}, headers=admin())
+        client.patch("/manager_api/entries/调用方", json={"enabled": False}, headers=admin())
         error, payload = _call(client, "/mcp", "send_message", {"token": token, "msg": "hi"})
         assert error is True
         assert payload["code"] == "unauthorized"
@@ -179,7 +179,7 @@ def test_sender_endpoint_records_entry_as_actor(cfg):
     client, token = _setup(cfg)
     with client:
         _call(client, "/mcp", "send_message", {"token": token, "msg": "审计", "dry_run": True})
-        logs = client.get("/api/logs", headers=admin()).json()["logs"]
+        logs = client.get("/manager_api/logs", headers=admin()).json()["logs"]
         assert logs[0]["actor"]["type"] == "entry"
         assert logs[0]["actor"]["name"] == "调用方"
         assert token not in json.dumps(logs, ensure_ascii=False)

@@ -29,20 +29,23 @@ from .settings import Settings
 # 免认证路径：/mcp 是调用面（身份来自参数里的 token，不需要 HTTP 认证）
 PUBLIC_PATHS = {"/health", "/mcp"}
 
-# 只有管理员能访问的路径前缀（顺序无关，命中即判定）
+# 只有管理员能访问的路径前缀。前缀本身就是权限边界：
+#   /manager_api  管理面（Basic）
+#   /manager_mcp  管理面（Basic）
+SENDER_ONLY_PREFIXES = ("/api",)
+
 ADMIN_ONLY_PREFIXES = (
     "/manager_mcp",
+    "/manager_api",
     "/dashboard",
-    "/api/channels",
-    "/api/entries",
-    "/api/rules",
-    "/api/route",
-    "/api/logs",
-    "/api/types",
-    "/api/stats",
 )
 # 管理员才能访问的精确路径
 ADMIN_ONLY_PATHS = {"/"}
+
+
+def _requires_sender(path: str) -> bool:
+    """发送面路径（/api/*）只接受入口 token。"""
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in SENDER_ONLY_PREFIXES)
 
 
 def _requires_admin(path: str) -> bool:
@@ -144,6 +147,15 @@ class AuthMiddleware:
         if not identity.is_admin and _requires_admin(path):
             await self._deny(
                 send, 403, "forbidden", f"该接口只允许管理员访问（当前身份：{identity.describe()}）"
+            )
+            return
+        if identity.is_admin and _requires_sender(path):
+            await self._deny(
+                send,
+                403,
+                "forbidden",
+                "该接口是发送面，只接受入口 token。管理操作请用 /manager_api（Basic），"
+                "发消息请用入口 token 调 /api/send 或 /mcp",
             )
             return
 

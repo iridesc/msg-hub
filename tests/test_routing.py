@@ -182,7 +182,11 @@ def test_fanout_sends_to_every_matched_outbound(cfg):
     assert {item["channel"]["name"] for item in result["results"]} == {"群A", "群B"}
 
 
-def test_disabled_outbound_is_skipped_not_failed(cfg):
+def test_disabled_outbound_raises(cfg):
+    """出口异常原样抛出，不降级成 skipped。
+
+    「消息没发出去」必须让调用方知道，不能和「发成功了」长得一样。
+    """
     hub, entry = _hub_with(
         cfg,
         channels=[("群A", ["kind:alert"]), ("群B", ["kind:alert"])],
@@ -191,15 +195,12 @@ def test_disabled_outbound_is_skipped_not_failed(cfg):
     hub.update_channel("群B", enabled=False)
     token = set_identity(Identity(role="entry", entry_name="pibox"))
     try:
-        result = hub.send("告警", dry_run=True)
+        with pytest.raises(HubError) as exc:
+            hub.send("告警", dry_run=True)
     finally:
         reset_identity(token)
-    assert result["ok"] is True
-    assert result["partial"] is True
-    assert result["counts"] == {"total": 2, "sent": 1, "skipped": 1, "failed": 0}
-    skipped = [item for item in result["results"] if item["status"] == "skipped"]
-    assert skipped[0]["channel"]["name"] == "群B"
-    assert skipped[0]["error"]["code"] == "channel_disabled"
+    assert exc.value.code == "channel_disabled"
+    assert "群B" in exc.value.message
 
 
 def test_no_route_lists_channels_and_rules(cfg):
@@ -215,7 +216,8 @@ def test_no_route_lists_channels_and_rules(cfg):
     assert exc.value.extra["available_channels"][0]["name"] == "群A"
 
 
-def test_all_failed_raises_and_reports(cfg):
+def test_first_outbound_error_is_raised_directly(cfg):
+    """不再有 all_failed 包装 —— 直接抛第一个出错出口的原因。"""
     hub, entry = _hub_with(
         cfg,
         channels=[("群A", ["kind:alert"]), ("群B", ["kind:alert"])],
@@ -229,8 +231,8 @@ def test_all_failed_raises_and_reports(cfg):
             hub.send("告警")
     finally:
         reset_identity(token)
-    assert exc.value.code == "all_failed"
-    assert len(exc.value.extra["results"]) == 2
+    assert exc.value.code == "channel_disabled"
+    assert "群A" in exc.value.message
 
 
 def test_single_outbound_keeps_legacy_top_level_fields(cfg):
@@ -294,6 +296,8 @@ def test_audit_log_records_matched_rules_per_outbound(cfg):
     assert [r["name"] for r in records["群A"]["matched_rules"]] == ["只在A", "都命中"]
     assert [r["name"] for r in records["群B"]["matched_rules"]] == ["只在B", "都命中"]
     assert records["群A"]["routed"] is True
+    # 出口相关参数整包存在 extra 里（核心不解析）
+    assert records["群A"]["extra"] == {}
     # 规则 id/name 都要有，便于 dashboard 悬停溯源
     assert set(records["群A"]["matched_rules"][0]) == {"name"}
 

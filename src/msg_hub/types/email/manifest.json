@@ -4,13 +4,6 @@
   "version": "2.0.0",
   "description": "通过 SMTP 用指定账号发邮件到固定收件人。支持纯文本与 HTML，支持 SSL/STARTTLS，支持 SOCKS5 代理（Gmail 等直连不通时用）。QQ/163 等需填授权码而非登录密码。",
   "entry": "send_msg.py",
-  "capabilities": {
-    "formats": ["plain", "markdown"],
-    "mention": false,
-    "mention_all": false,
-    "attachments": false,
-    "max_chars": 20000
-  },
   "settings_schema": {
     "type": "object",
     "title": "邮箱渠道配置",

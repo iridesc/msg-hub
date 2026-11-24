@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from mcp.server.mcpserver.exceptions import ToolError
 
 from msg_hub.mcp_server import build_mcp
@@ -68,16 +70,29 @@ async def test_sdk_advertises_the_same_contract_as_stdio(hub):
             assert advertised["properties"][param].get("default") == prop.get("default"), f"{name}.{param}"
 
 
+async def _admin_route(mcp) -> None:
+    """管理员发消息只能命中「入口条件为空」的规则。"""
+    await mcp.call_tool(
+        "channel_create",
+        {"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS, "tags": ["kind:test"]},
+    )
+    await mcp.call_tool(
+        "rule_create",
+        {"name": "所有入口 → 工作群1", "outbound": {"field": "tag", "op": "exact", "value": "kind:test"}},
+    )
+
+
 async def test_mention_param_accepts_single_string(hub):
     """@成员既接受数组也接受单个字符串（两个前端行为一致）。"""
     mcp = build_mcp(hub)
-    await mcp.call_tool(
-        "channel_create",
-        {"name": "工作群1", "type": "wecom_bot", "settings": WECOM_SETTINGS},
-    )
+    await _admin_route(mcp)
     result = await mcp.call_tool(
         "send_message",
-        {"channel": "工作群1", "text": "hi", "mention_users": "zhangsan", "dry_run": True},
+        {
+            "text": "hi",
+            "dry_run": True,
+            "extra": {"mention_users": "zhangsan"},  # 单字符串也要能收
+        },
     )
     assert _data(result)["ok"] is True
 
@@ -101,7 +116,12 @@ async def test_create_send_and_delete_via_mcp(cfg, hub):
     assert channel["name"] == "工作群1"
     assert "id" not in channel
 
-    sent = await mcp.call_tool("send_message", {"channel": "工作群1", "text": "hi", "dry_run": True})
+    # 没有规则就走不通 —— send 已经不能指定出口了
+    with pytest.raises(ToolError):
+        await mcp.call_tool("send_message", {"text": "hi", "dry_run": True})
+
+    # 单发某个出口用 channel_test
+    sent = await mcp.call_tool("channel_test", {"channel": "工作群1", "text": "hi", "dry_run": True})
     assert _data(sent)["ok"] is True
 
     logs = await mcp.call_tool("message_logs", {"channel": "工作群1", "limit": 5})
@@ -115,7 +135,7 @@ async def test_create_send_and_delete_via_mcp(cfg, hub):
 async def test_tool_errors_are_structured(cfg, hub):
     mcp = build_mcp(hub)
     try:
-        await mcp.call_tool("send_message", {"channel": "不存在", "text": "hi"})
+        await mcp.call_tool("channel_get", {"channel": "不存在"})
     except ToolError as exc:
         payload = _error_payload(exc)
         assert payload["code"] == "not_found"
@@ -125,11 +145,12 @@ async def test_tool_errors_are_structured(cfg, hub):
 
 
 async def test_mention_all_guard_via_mcp(cfg, hub):
+    """出口没开 allow_mention_all 时被拦下 —— 护栏在插件里，异常原样抛出。"""
     mcp = build_mcp(hub)
-    await mcp.call_tool("channel_create", {"name": "群", "type": "wecom_bot", "settings": WECOM_SETTINGS})
-    try:
-        await mcp.call_tool("send_message", {"channel": "群", "text": "hi", "mention_all": True, "dry_run": True})
-    except ToolError as exc:
-        assert _error_payload(exc)["code"] == "mention_all_denied"
-    else:  # pragma: no cover
-        raise AssertionError("应当抛出 ToolError")
+    await _admin_route(mcp)
+    with pytest.raises(ToolError) as exc:
+        await mcp.call_tool(
+            "send_message", {"text": "hi", "dry_run": True, "extra": {"mention_all": True}}
+        )
+    assert _error_payload(exc.value)["code"] == "invalid_argument"
+    assert "@所有人" in _error_payload(exc.value)["message"]

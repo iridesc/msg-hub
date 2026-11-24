@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import Annotated, Any, Callable, Literal, Union
+from typing import Annotated, Any, Callable, Literal, Optional, TypedDict, Union
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -42,6 +42,23 @@ _SIMPLE_TYPES: dict[str, Any] = {
 }
 
 
+def _typed_dict(schema: dict[str, Any]) -> Any:
+    """带 properties 的 object → TypedDict，让 SDK 生成完整的嵌套 schema。
+
+    否则模型只看到 {"type": "object"}，全靠 description 猜里面能填什么。
+    """
+    props = schema.get("properties") or {}
+    annotations: dict[str, Any] = {}
+    for name, sub in props.items():
+        if not isinstance(sub, dict):
+            continue
+        types = _types_of(sub)
+        # 多类型（如 array | string）要保留成 Union，否则 pydantic 会把单一写法拒掉
+        inner = types[0] if len(types) == 1 else Union[types]  # type: ignore[arg-type]
+        annotations[name] = Optional[inner]
+    return TypedDict("Extra", annotations, total=False)  # type: ignore[operator]
+
+
 def _types_of(schema: dict[str, Any]) -> tuple[Any, ...]:
     """JSON Schema 片段 → 可用类型元组。"""
     if "anyOf" in schema:
@@ -54,6 +71,8 @@ def _types_of(schema: dict[str, Any]) -> tuple[Any, ...]:
     if schema.get("type") == "string" and schema.get("enum"):
         return (Literal[tuple(schema["enum"])],)
     kind = schema.get("type")
+    if kind == "object" and isinstance(schema.get("properties"), dict) and schema["properties"]:
+        return (_typed_dict(schema),)
     if kind == "array":
         items = schema.get("items")
         inner = _types_of(items)[0] if isinstance(items, dict) else Any

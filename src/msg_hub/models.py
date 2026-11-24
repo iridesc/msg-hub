@@ -14,11 +14,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
-NAME_RE = re.compile(r"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff .:_\-]{0,63}$")
 
-MESSAGE_FORMATS = ("plain", "markdown")
 
 # 错误码：既用于 REST 响应，也用于审计日志，便于上游做重试判定
 ERROR_CODES = {
@@ -30,7 +28,6 @@ ERROR_CODES = {
     "channel_disabled": ("渠道已停用", False),
     "channel_broken": ("渠道配置缺失或损坏，需修复后再发送", False),
     "rate_limited": ("超出该渠道的发送频率限制", True),
-    "mention_all_denied": ("该渠道未开启 @所有人", False),
     "text_too_long": ("消息超过该渠道的长度上限", False),
     "send_failed": ("发送失败", False),
     "plugin_timeout": ("发送超时", True),
@@ -39,7 +36,6 @@ ERROR_CODES = {
     "forbidden": ("当前凭据无权执行该操作", False),
     # 路由相关
     "no_route": ("当前入口没有匹配到任何可用出口，请检查标签与路由规则", False),
-    "all_failed": ("所有出口都发送失败", True),
 }
 
 
@@ -71,11 +67,7 @@ def now_iso() -> str:
 
 # ── 标签 ──────────────────────────────────────────────────
 # 约定 key:value 形式（app:pibox / env:prod / kind:alert）。
-# prefix / suffix 两种匹配方式是标签分层的价值所在，所以只做「不合法就提示」，
-# 不做强制拒绝——硬性校验会让存量数据迁移变复杂，收益却很小。
-TAG_PATTERN = re.compile(r"^[\w\u4e00-\u9fff][\w\u4e00-\u9fff .:_\-/]{0,63}$")
-
-
+# 不做格式强制校验——硬性校验会让存量数据迁移变复杂，收益却很小。
 def normalize_tags(raw: Any) -> list[str]:
     """把 tags 归一化成字符串列表：去重、去空、保序、大小写不敏感去重。"""
     if raw is None:
@@ -397,19 +389,48 @@ class Rule:
 
 @dataclass
 class Message:
+    """核心眼里的消息：正文 + 一个不透明的 extra。
+
+    extra 原样带到插件，核心不读里面的任何 key。
+    """
+
     text: str
-    format: Literal["plain", "markdown"] = "plain"
-    title: str | None = None
-    mention_users: list[str] = field(default_factory=list)
-    mention_mobiles: list[str] = field(default_factory=list)
-    mention_all: bool = False
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "text": self.text,
-            "format": self.format,
-            "title": self.title,
-            "mention_users": self.mention_users,
-            "mention_mobiles": self.mention_mobiles,
-            "mention_all": self.mention_all,
-        }
+        return {"text": self.text, "extra": dict(self.extra)}
+
+
+# ── 消息体 ────────────────────────────────────────────────
+# 核心只认识两个字段：text（要校验长度、写审计 preview）和 dry_run（决定是否
+# 消费配额）。其余控制字段一律收在 extra 里，核心**不解析、不校验、不归一化**，
+# 原样透传给出口插件，由插件按自己的需要去取。
+#
+# 为什么不在核心校验：format / title / mention_* 是「某个出口类型」的概念，
+# 不是 msg-hub 的概念。核心一旦开始校验它们，就等于把 wecom_bot 的字段表
+# 硬编码进了路由层，以后加一个参数完全不同的类型（比如卡片消息、附件）
+# 就得回来改核心。边界应该停在「路由」这里。
+MESSAGE_FIELDS = ("text", "dry_run", "extra")
+
+
+def parse_message_body(body: dict[str, Any]) -> tuple[Any, bool, dict[str, Any]]:
+    """拆开消息体：顶层只认 text / dry_run / extra。
+
+    顶层多一个字段仍然报错（这一层是 msg-hub 自己的契约，不是出口的），
+    但 extra 里装什么核心一概不管 —— 拼错字段名由出口插件负责发现。
+    """
+    unknown = [key for key in body if key not in MESSAGE_FIELDS]
+    if unknown:
+        raise HubError(
+            "invalid_argument",
+            f"消息体里有不认识的字段：{sorted(unknown)}（支持：text / dry_run / extra；"
+            "format、title、mention_* 这些控制字段请放进 extra）",
+        )
+    raw = body.get("extra")
+    if raw is None:
+        extra: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        extra = dict(raw)
+    else:
+        raise HubError("invalid_argument", "extra 必须是对象")
+    return body.get("text"), bool(body.get("dry_run", False)), extra

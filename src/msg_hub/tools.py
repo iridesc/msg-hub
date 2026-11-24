@@ -107,14 +107,24 @@ _TAGS = {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "str
 # 路由条件：{field, op, value}
 _CONDITION = {"type": "object"}
 
+# 消息体的控制字段：全部收进 extra，顶层只留正文 + dry_run。
+# 这里不列具体字段 —— 出口相关参数是「出口类型」的概念，核心不解析，
+# 硬编码一份字段表反而会挡住新类型自己的参数。
+_EXTRA = {"type": "object"}
 
-def _as_list(value: Any) -> list[str] | None:
-    """把单个字符串归一化成列表；None/空串 → None。"""
-    if value is None or value == "":
-        return None
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]
+EXTRA_DESCRIPTION = (
+    "可选的控制字段，原样透传给出口，不传就用出口自己的默认值。\n"
+    "常用字段（企业微信）：format（plain/markdown）、title（邮件主题）、"
+    "mention_users（@成员 userid）、mention_mobiles（@成员手机号）、"
+    "mention_all（@所有人，需出口开启授权）。\n"
+    "不同出口类型支持的字段不一样，以出口自己的要求为准。"
+)
+
+SEND_DESCRIPTION = (
+    "发送消息。正文放 text（调用面用 msg），可选控制字段放 extra。\n"
+    "**不要也不要想着指定出口**：投递目标由服务端的入口标签 + 路由规则决定，"
+    "响应里的 results 会列出每个出口的结果。dry_run=true 只校验不真发。"
+)
 
 
 def guard(spec: ToolSpec) -> None:
@@ -193,25 +203,10 @@ def _channel_delete(hub: Hub, channel: str | int) -> dict[str, Any]:
 def _send_message(
     hub: Hub,
     text: str,
-    channel: str | int | None = None,
-    format: str = "plain",  # noqa: A002 - 工具参数名就是 format
-    title: str | None = None,
-    mention_users: list[str] | str | None = None,
-    mention_mobiles: list[str] | str | None = None,
-    mention_all: bool = False,
     dry_run: bool = False,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return hub.send(
-        text,
-        channel=channel,
-        format=format,
-        title=title,
-        mention_users=_as_list(mention_users),
-        mention_mobiles=_as_list(mention_mobiles),
-        mention_all=mention_all,
-        dry_run=dry_run,
-        source="mcp",
-    )
+    return hub.send(text, dry_run=dry_run, source="mcp", extra=extra)
 
 
 def _channel_test(
@@ -525,12 +520,8 @@ def _send_with_token(
     hub: Hub,
     token: str,
     msg: str,
-    format: str = "plain",  # noqa: A002 - 工具参数名就是 format
-    title: str | None = None,
-    mention_users: list[str] | str | None = None,
-    mention_mobiles: list[str] | str | None = None,
-    mention_all: bool = False,
     dry_run: bool = False,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     entry = hub.store.find_entry_by_secret(str(token or ""))
     if entry is None:
@@ -546,16 +537,7 @@ def _send_with_token(
     ctx = set_identity(identity)
     try:
         hub.store.touch_entry(entry.name)
-        return hub.send(
-            msg,
-            format=format,
-            title=title,
-            mention_users=_as_list(mention_users),
-            mention_mobiles=_as_list(mention_mobiles),
-            mention_all=mention_all,
-            dry_run=dry_run,
-            source="mcp",
-        )
+        return hub.send(msg, dry_run=dry_run, source="mcp", extra=extra)
     finally:
         reset_identity(ctx)
 
@@ -564,21 +546,11 @@ def _send_with_token(
 # 发送一律走 /mcp 调用面，保持「发送只有一条路」。
 ADMIN_SEND_TOOL = ToolSpec(
     name="send_message",
-    description=(
-        "发送消息。**不需要也不要指定出口**：投递目标由服务端的入口标签 + 路由规则决定，"
-        "响应里的 results 会列出每个出口的结果。text 为正文；format 支持 plain / markdown；"
-        "title 用作邮件主题；dry_run=true 只校验不真发。"
-        "只有管理员可以用 channel 参数直连某个出口（应急/调试）。"
-    ),
+    description=SEND_DESCRIPTION,
     params=(
         Param("text", _STRING, "消息正文"),
-        Param("channel", _STRING, "仅管理员：直连指定出口（入口身份传了会被拒绝）", None),
-        Param("format", {**_STRING, "enum": ["plain", "markdown"]}, "正文格式", "plain"),
-        Param("title", _STRING, "标题（邮件主题）", None),
-        Param("mention_users", _MENTIONS, "@成员 userid 列表（也可只给单个）", None),
-        Param("mention_mobiles", _MENTIONS, "@成员手机号列表（也可只给单个）", None),
-        Param("mention_all", _BOOL, "@所有人（需出口授权）", False),
         Param("dry_run", _BOOL, "只校验不真发", False),
+        Param("extra", _EXTRA, EXTRA_DESCRIPTION, None),
     ),
     handler=_send_message,
 )
@@ -588,20 +560,12 @@ ADMIN_SEND_TOOL = ToolSpec(
 SENDER_TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="send_message",
-        description=(
-            "发送消息。参数里带 token（入口的 API Token）和 msg（正文）。"
-            "**不需要也不能指定发到哪个出口**：投递目标由服务端的路由规则决定，"
-            "响应里的 results 会列出每个出口的结果。token 无效时返回 unauthorized。"
-        ),
+        description=SEND_DESCRIPTION + "token 无效时返回 unauthorized。",
         params=(
             Param("token", _STRING, "入口的 API Token（mh_ 开头）"),
             Param("msg", _STRING, "消息正文"),
-            Param("format", {**_STRING, "enum": ["plain", "markdown"]}, "正文格式", "plain"),
-            Param("title", _STRING, "标题（邮件主题）", None),
-            Param("mention_users", _MENTIONS, "@成员 userid 列表（也可只给单个）", None),
-            Param("mention_mobiles", _MENTIONS, "@成员手机号列表（也可只给单个）", None),
-            Param("mention_all", _BOOL, "@所有人（需出口授权）", False),
             Param("dry_run", _BOOL, "只校验不真发", False),
+            Param("extra", _EXTRA, EXTRA_DESCRIPTION, None),
         ),
         handler=_send_with_token,
     ),

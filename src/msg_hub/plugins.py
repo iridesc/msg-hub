@@ -14,8 +14,7 @@
              "request_id": "...",
              "channel": {"name": "工作群1", "type": "wecom_bot"},
              "settings": {...},       # 该类型的配置（凭据），已过 schema 校验
-             "message": {"text": "...", "format": "plain|markdown", "title": null,
-                         "mention_users": [], "mention_mobiles": [], "mention_all": false},
+             "message": {"text": "...", "extra": {...}},  # extra 原样透传，由插件自己取
              "options": {...},        # 跨类型护栏
              "dry_run": false,
              "cache_dir": "<data>/.cache"
@@ -73,7 +72,6 @@ class Manifest:
     description: str
     entry: Path
     settings_schema: dict[str, Any]
-    capabilities: dict[str, Any] = field(default_factory=dict)
     version: str = "1.0.0"
 
     def summary(self) -> dict[str, Any]:
@@ -82,7 +80,6 @@ class Manifest:
             "name": self.name,
             "description": self.description,
             "version": self.version,
-            "capabilities": self.capabilities,
             "settings_schema": self.settings_schema,
         }
 
@@ -184,7 +181,6 @@ class Registry:
             description=str(raw.get("description") or ""),
             entry=entry,
             settings_schema=dict(raw["settings_schema"]),
-            capabilities=dict(raw.get("capabilities") or {}),
             version=str(raw.get("version") or "1.0.0"),
         )
 

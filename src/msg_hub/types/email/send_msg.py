@@ -84,9 +84,14 @@ def html_to_text(html: str) -> str:
 
 
 def build_message(settings: dict[str, Any], message: dict[str, Any]) -> EmailMessage:
+    """组装邮件。
+
+    出口相关的参数都在 extra 里，核心不解析、原样透传，这里自己按需要取。
+    """
     text = str(message.get("text") or "")
-    fmt = str(message.get("format") or "plain").lower()
-    subject = str(message.get("title") or "").strip() or text.strip().splitlines()[0][:80]
+    message_extra = message.get("extra") or {}
+    fmt = str(message_extra.get("format") or "plain").lower()
+    subject = str(message_extra.get("title") or "").strip() or text.strip().splitlines()[0][:80]
     prefix = str(settings.get("subject_prefix") or "")
     sender_name, sender_addr = parseaddr(str(settings.get("sender") or settings["username"]))
     msg = EmailMessage()
@@ -140,7 +145,8 @@ def main() -> int:
             return fail("invalid_settings", f"缺少必填配置：{required}")
 
     message = request.get("message") or {}
-    if not str(message.get("text") or "").strip() and not str(message.get("title") or "").strip():
+    message_extra = message.get("extra") or {}
+    if not str(message.get("text") or "").strip() and not str(message_extra.get("title") or "").strip():
         return fail("invalid_argument", "邮件正文不能为空")
 
     proxy = str(settings.get("socks5_proxy") or "").strip()

@@ -261,7 +261,7 @@
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>时间</th><th>调用者</th><th>来源</th><th>出口</th><th>匹配规则</th><th>格式</th><th>结果</th>
+          <th>时间</th><th>调用者</th><th>来源</th><th>出口</th><th>匹配规则</th><th>参数</th><th>结果</th>
           <th>错误</th><th>内容</th><th>耗时</th>
         </tr></thead>
         <tbody id="logs"></tbody>
@@ -424,27 +424,6 @@
   </div>
 </div>
 
-<!-- ── 明文 token ─────────────────────────────────── -->
-<div id="secret-modal" class="modal hidden">
-  <div class="card">
-    <h3>Token 已生成 · <span id="secret-name"></span></h3>
-    <div class="content">
-      <div class="err-msg" style="color:var(--warn)">
-        完整值只显示这一次，关闭后只能看到前缀。请现在复制给调用方。
-      </div>
-      <pre id="secret-value" style="word-break:break-all;user-select:all"></pre>
-      <div class="hint" style="margin-top:8px">
-        用法：<code>Authorization: Bearer &lt;上面的值&gt;</code>，请求体只传 <code>text</code>，
-        <b>不要传 channel</b>（传了会被拒）。投递到哪些出口由路由规则决定。
-      </div>
-    </div>
-    <div class="foot">
-      <button id="secret-copy">复制</button>
-      <button id="secret-close" class="primary">我已保存</button>
-    </div>
-  </div>
-</div>
-
 <datalist id="dl-entry-value"></datalist>
 <datalist id="dl-outbound-value"></datalist>
 
@@ -500,7 +479,7 @@ const parseTags = (value) => String(value || "")
   .split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
 const show = (id) => $(id).classList.remove("hidden");
 const hide = (id) => $(id).classList.add("hidden");
-const MODALS = ["entry-modal", "rule-modal", "channel-modal", "preview-modal", "secret-modal"];
+const MODALS = ["entry-modal", "rule-modal", "channel-modal", "preview-modal"];
 const closeAll = () => MODALS.forEach(hide);
 
 // ── 统计 ────────────────────────────────────────────────
@@ -546,8 +525,9 @@ function renderEntries() {
         </label>
       </div>
       <div class="row sub">
-        <code class="token" title="点击复制">${esc(e.secret)}</code>
-        <button class="link copy" data-copy="${esc(e.secret)}" title="复制 token">复制</button>
+        <code class="token" data-token="${esc(e.name)}">••••••••</code>
+        <button class="link" data-copy="${esc(e.name)}" title="复制完整 token">复制</button>
+        <button class="link" data-reveal="${esc(e.name)}" title="显示/隐藏完整 token">查看</button>
       </div>
       <div class="row sub">
         ${tagList(e.tags, "hl")}
@@ -601,6 +581,13 @@ function renderChannels() {
 }
 
 // ── 日志 ────────────────────────────────────────────────
+// 参数列：出口相关参数整包存在 extra 里（核心不解析，原样透传给出口）
+function extraCell(extra) {
+  const keys = Object.keys(extra || {});
+  if (!keys.length) return "";
+  return keys.map((key) => `<span class="tag">${esc(key)}</span>`).join(" ");
+}
+
 function actorLabel(actor) {
   if (!actor) return `<span class="muted">—</span>`;
   if (actor.type === "admin") return `<span class="tag">管理员</span>`;
@@ -688,7 +675,7 @@ function renderLogs() {
       <td class="muted">${esc(record.source || "")}</td>
       <td>${esc(info.name || "")}</td>
       <td>${ruleChips(record)}</td>
-      <td class="muted">${esc(record.format || "")}</td>
+      <td class="muted">${extraCell(record.extra)}</td>
       <td>${pill}</td>
       <td class="muted">${esc(record.error_code || "")}</td>
       <td>${esc(record.text_preview || "")}</td>
@@ -701,11 +688,11 @@ function renderLogs() {
 // ── 加载 ────────────────────────────────────────────────
 async function refresh() {
   try {
-    const [health, stats, logs, entries, rules, channels] = await Promise.all([
-      api("/health"), api("/api/stats"), api("/api/logs?limit=500"),
-      api("/api/entries"), api("/api/rules"), api("/api/channels"),
+    const [stats, logs, entries, rules, channels] = await Promise.all([
+      api("/manager_api/stats"), api("/manager_api/logs?limit=500"),
+      api("/manager_api/entries"), api("/manager_api/rules"), api("/manager_api/channels"),
     ]);
-    if (health.auth === "none") {
+    if (stats.auth === "none") {
       show("auth-note");
       $("auth-note").textContent = "未设置管理员密码：当前无鉴权，仅限本机调试";
     } else {
@@ -752,12 +739,12 @@ async function submitEntry() {
   const payload = { name, tags: parseTags($("e-tags").value) };
   try {
     if (EDIT_ENTRY == null) {
-      const data = await api("/api/entries", { method: "POST", body: JSON.stringify(payload) });
+      await api("/manager_api/entries", { method: "POST", body: JSON.stringify(payload) });
       hide("entry-modal");
-      showSecret(data.entry);
+      toast("入口已创建，token 在列表里点「查看」");
     } else {
       payload.enabled = $("e-enabled").checked;
-      await api("/api/entries/" + encodeURIComponent(EDIT_ENTRY), { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/manager_api/entries/" + encodeURIComponent(EDIT_ENTRY), { method: "PATCH", body: JSON.stringify(payload) });
       hide("entry-modal");
       toast("已保存");
     }
@@ -860,12 +847,12 @@ async function submitRule() {
   if (entryField) payload.entry = { field: entryField, op: $("r-entry-op").value, value: entryValue };
   try {
     if (EDIT_RULE == null) {
-      await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
+      await api("/manager_api/rules", { method: "POST", body: JSON.stringify(payload) });
       toast("规则已创建");
     } else {
       payload.clear_entry = !entryField;
       payload.enabled = $("r-enabled").checked;
-      await api("/api/rules/" + encodeURIComponent(EDIT_RULE), { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/manager_api/rules/" + encodeURIComponent(EDIT_RULE), { method: "PATCH", body: JSON.stringify(payload) });
       toast("已保存");
     }
     hide("rule-modal");
@@ -929,7 +916,7 @@ function collectSettings() {
 
 async function openChannelModal(channel) {
   if (!TYPES.length) {
-    try { TYPES = (await api("/api/types")).types; } catch (err) { toast(err.message, true); }
+    try { TYPES = (await api("/manager_api/types")).types; } catch (err) { toast(err.message, true); }
   }
   EDIT_CHANNEL = channel ? channel.name : null;
   const editing = Boolean(channel);
@@ -979,10 +966,10 @@ async function submitChannel() {
 
   try {
     if (!editing) {
-      await api("/api/channels", { method: "POST", body: JSON.stringify(payload) });
+      await api("/manager_api/channels", { method: "POST", body: JSON.stringify(payload) });
       toast("出口已创建");
     } else {
-      await api("/api/channels/" + encodeURIComponent(EDIT_CHANNEL), { method: "PATCH", body: JSON.stringify(payload) });
+      await api("/manager_api/channels/" + encodeURIComponent(EDIT_CHANNEL), { method: "PATCH", body: JSON.stringify(payload) });
       toast("已保存");
     }
     hide("channel-modal");
@@ -998,35 +985,23 @@ async function submitChannel() {
 }
 
 // ── 删除 ────────────────────────────────────────────────
-async function removeEntry(entry) {
-  if (!confirm(`删除入口「${entry.name}」？用这把 token 的系统会立刻发不出消息。`)) return;
+// 三个删除操作结构相同：确认 → DELETE → 关弹窗 → 刷新
+async function removeItem(collection, label, name, modalId, warning) {
+  if (!confirm(`删除${label}「${name}」？${warning}`)) return;
   try {
-    await api("/api/entries/" + encodeURIComponent(entry.name), { method: "DELETE" });
-    hide("entry-modal");
+    await api(`/manager_api/${collection}/` + encodeURIComponent(name), { method: "DELETE" });
+    hide(modalId);
     toast("已删除");
     await refresh();
   } catch (err) { toast(err.message, true); }
 }
 
-async function removeRule(rule) {
-  if (!confirm(`删除规则「${rule.name}」？`)) return;
-  try {
-    await api("/api/rules/" + encodeURIComponent(rule.name), { method: "DELETE" });
-    hide("rule-modal");
-    toast("已删除");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
-
-async function removeChannel(channel) {
-  if (!confirm(`删除出口「${channel.name}」？配置会留档，可人工恢复。`)) return;
-  try {
-    await api("/api/channels/" + encodeURIComponent(channel.name), { method: "DELETE" });
-    hide("channel-modal");
-    toast("已删除");
-    await refresh();
-  } catch (err) { toast(err.message, true); }
-}
+const removeEntry = (entry) =>
+  removeItem("entries", "入口", entry.name, "entry-modal",
+    "用这把 token 的系统会立刻发不出消息。");
+const removeRule = (rule) => removeItem("rules", "规则", rule.name, "rule-modal", "");
+const removeChannel = (channel) =>
+  removeItem("channels", "出口", channel.name, "channel-modal", "配置会留档，可人工恢复。");
 
 // ── 路由测试 ────────────────────────────────────────────
 function openPreview() {
@@ -1050,7 +1025,7 @@ async function runPreview() {
   button.disabled = true;
   box.innerHTML = `<div class="muted">测试中…</div>`;
   try {
-    const data = await api("/api/route/preview" + (entry ? "?entry=" + encodeURIComponent(entry) : ""));
+    const data = await api("/manager_api/route/preview" + (entry ? "?entry=" + encodeURIComponent(entry) : ""));
     const outs = data.outbounds || [];
     const trace = data.trace || [];
     const applied = trace.filter((t) => t.applied);
@@ -1107,13 +1082,6 @@ async function runPreview() {
   }
 }
 
-// ── 明文 token ──────────────────────────────────────────
-function showSecret(entry) {
-  $("secret-name").textContent = entry.name;
-  $("secret-value").textContent = entry.secret;
-  show("secret-modal");
-}
-
 // ── 事件绑定 ────────────────────────────────────────────
 $("btn-refresh").onclick = () => refresh();
 $("add-entry").onclick = () => openEntryModal(null);
@@ -1156,17 +1124,6 @@ $("c-rewrite").onchange = () => {
   }
 };
 
-$("secret-close").onclick = () => hide("secret-modal");
-$("secret-copy").onclick = async () => {
-  const value = $("secret-value").textContent;
-  try {
-    await navigator.clipboard.writeText(value);
-    toast("已复制到剪贴板");
-  } catch (_) {
-    toast("复制失败，请手动选中复制", true);
-  }
-};
-
 // ── 视图切换（hash 路由，刷新后停在原页面）──────────
 function setView(name) {
   VIEW = VIEWS.includes(name) ? name : "logs";
@@ -1206,7 +1163,7 @@ $("f-reset").onclick = () => {
 function bindRowClick(listId, lookup, opener) {
   $(listId).onclick = (event) => {
     // 点开关 / 点复制 都不算「打开编辑」
-    if (event.target.closest("label.switch, [data-copy]")) return;
+    if (event.target.closest("label.switch, [data-copy], [data-reveal]")) return;
     const item = event.target.closest("li.item");
     if (!item) return;
     const name = Object.values(item.dataset)[0];
@@ -1226,20 +1183,54 @@ async function toggle(kind, name, enabled) {
   } catch (err) { toast(err.message, true); }
 }
 
-async function copyText(value) {
-  try {
-    await navigator.clipboard.writeText(value);
-    toast("token 已复制到剪贴板");
-  } catch (_) {
-    toast("复制失败，请手动选中复制", true);
+// 复制到剪贴板。
+// navigator.clipboard 只在安全上下文可用（https 或 localhost）；通过内网 IP
+// 走 http 访问时它是 undefined，直接调用会抛错。所以退回 textarea + execCommand。
+async function copyText(value, okMessage = "已复制到剪贴板") {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(okMessage);
+      return true;
+    } catch (_) { /* 落到下面的兜底 */ }
   }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "");
+  area.style.cssText = "position:fixed;top:-1000px;opacity:0";
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+  document.body.removeChild(area);
+  toast(ok ? okMessage : "复制失败，请手动选中复制", !ok);
+  return ok;
 }
-$("e-copy").onclick = () => copyText($("e-token").textContent);
+
+// 列表里按入口名取完整 token（不在 DOM 里预置明文，避免截屏泄露）
+function entrySecret(name) {
+  const entry = ENTRIES.find((item) => item.name === name);
+  return entry ? entry.secret : "";
+}
+$("e-copy").onclick = () => copyText($("e-token").textContent, "token 已复制到剪贴板");
 
 $("list-entries").addEventListener("click", (event) => {
   const copy = event.target.closest("[data-copy]");
-  if (!copy) return;
-  copyText(copy.dataset.copy);
+  if (copy) {
+    copyText(entrySecret(copy.dataset.copy), "token 已复制到剪贴板");
+    return;
+  }
+  const reveal = event.target.closest("[data-reveal]");
+  if (!reveal) return;
+  const name = reveal.dataset.reveal;
+  // 按 data 属性找同一行的 code（入口名可能带引号/中文，不走选择器拼接）
+  const code = [...$("list-entries").querySelectorAll("[data-token]")]
+    .find((el) => el.dataset.token === name);
+  if (!code) return;
+  const hidden = code.textContent.startsWith("•");
+  code.textContent = hidden ? entrySecret(name) : "••••••••";
+  code.style.wordBreak = hidden ? "break-all" : "";
+  reveal.textContent = hidden ? "隐藏" : "查看";
 });
 
 $("list-entries").addEventListener("change", (event) => {
