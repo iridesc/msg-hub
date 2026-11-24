@@ -154,3 +154,40 @@ async def test_mention_all_guard_via_mcp(cfg, hub):
         )
     assert _error_payload(exc.value)["code"] == "invalid_argument"
     assert "@所有人" in _error_payload(exc.value)["message"]
+
+
+# ── 未知参数必须报错，不能被静默忽略 ──────────────────────
+# 曾经的行为：SDK 生成的参数模型默认 extra="ignore"，把 format 写在顶层会被
+# 悄悄丢掉 —— 消息照发、返回 ok，只是 markdown 变成了纯文本。生产上就是这么
+# 静默降级的，所以这里要守住「报错」而不是「忽略」。
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"format": "markdown"},   # 老结构：format 在顶层
+        {"title": "标题"},         # 老结构
+        {"mention_all": True},    # 老结构
+        {"channel": "群"},         # v0.5 已删除的字段
+        {"source": "cron"},       # 不可伪造的来源
+        {"typo_here": 1},         # 纯拼错
+    ],
+)
+async def test_unknown_arguments_are_rejected(cfg, hub, bad_args):
+    mcp = build_mcp(hub)
+    with pytest.raises(ToolError) as exc:
+        await mcp.call_tool("send_message", {"text": "hi", "dry_run": True, **bad_args})
+    message = str(exc.value)
+    assert "Extra inputs are not permitted" in message
+    assert list(bad_args)[0] in message
+
+
+async def test_known_arguments_still_work(cfg, hub):
+    """收紧校验不能误伤正确用法。"""
+    mcp = build_mcp(hub)
+    await _admin_route(mcp)
+    data = _data(
+        await mcp.call_tool(
+            "send_message",
+            {"text": "hi", "dry_run": True, "extra": {"format": "markdown", "title": "t"}},
+        )
+    )
+    assert data["ok"] is True

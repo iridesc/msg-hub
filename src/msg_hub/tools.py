@@ -123,7 +123,9 @@ EXTRA_DESCRIPTION = (
 SEND_DESCRIPTION = (
     "发送消息。正文放 text（调用面用 msg），可选控制字段放 extra。\n"
     "**不要也不要想着指定出口**：投递目标由服务端的入口标签 + 路由规则决定，"
-    "响应里的 results 会列出每个出口的结果。dry_run=true 只校验不真发。"
+    "响应里的 results 会列出每个出口的结果。dry_run=true 只校验不真发。\n"
+    "只接受 text/msg、dry_run、extra 三个参数（调用面另加 token）；"
+    "format、title、mention_* 这些必须放进 extra，写在顶层会被拒绝。"
 )
 
 

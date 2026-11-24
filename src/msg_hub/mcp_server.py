@@ -24,12 +24,29 @@ from typing import Annotated, Any, Callable, Literal, Optional, TypedDict, Union
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import Field
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
+from pydantic import ConfigDict, Field
 
 from . import __version__
 from .models import HubError
 from .service import Hub
 from .tools import INSTRUCTIONS, TOOLS, Param, ToolSpec, guard
+
+def _forbid_unknown_arguments() -> None:
+    """让 MCP 对不认识的参数报错，而不是静默丢掉。
+
+    SDK 用 pydantic 生成每个工具的参数模型，模型基类 ArgModelBase 的
+    model_config 没设 extra，pydantic 默认就是 ignore —— 调用方把 format
+    写成顶层字段时会被悄悄丢弃：消息照发、返回 ok，只是 markdown 变成了纯文本。
+    这类错误必须当场报出来，否则要等到有人发现排版不对才知道。
+
+    与 HTTP 侧保持一致：/api/send 顶层出现未知字段也是 400。
+    """
+    ArgModelBase.model_config = ConfigDict(  # type: ignore[assignment]
+        arbitrary_types_allowed=True,
+        extra="forbid",
+    )
+
 
 # JSON Schema 基础类型 → Python 类型
 _SIMPLE_TYPES: dict[str, Any] = {
@@ -148,6 +165,9 @@ def build_mcp(
         /mcp          → SENDER_TOOLS（1 个，token + msg）
         /manager_mcp  → ADMIN_TOOLS（17 个管理工具，**不含 send_message**）
     """
+    # 必须在建工具之前设好：参数模型在 add_tool 时生成，之后改基类配置不生效
+    _forbid_unknown_arguments()
+
     mcp = MCPServer(
         name="msg-hub",
         title=title,
